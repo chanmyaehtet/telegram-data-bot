@@ -30,6 +30,7 @@ outputType = "console"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "cd telegram-bot && python3 main.py"
+waitForPort = 6000
 
 [agent]
 stack = "PNPM_WORKSPACE"

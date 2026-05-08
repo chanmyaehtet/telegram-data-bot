@@ -47,3 +47,18 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+
+# Bot runtime data (sensitive)
+telegram-bot/bot_data.pickle
+telegram-bot/*.tmp
+
+# Env
+.env
+.env.*

@@ -1,14 +1,13 @@
 services:
-  - type: web
-    name: telegram-bot
-    runtime: python
-    buildCommand: pip install -r requirements.txt && python3 telegram-bot/migrate_data.py || true
-    startCommand: python3 telegram-bot/main.py
-    envVars:
-      - key: TELEGRAM_BOT_TOKEN
-        sync: false
-      - key: MONGO_URI
-        sync: false
-      - key: BOT_KEEPALIVE_PORT
-        value: "10000"
-    autoDeploy: true
+    - type: web
+      name: telegram-bot
+      runtime: python
+      buildCommand: pip install -r requirements.txt
+      startCommand: python3 telegram-bot/main.py
+      envVars:
+        - key: TELEGRAM_BOT_TOKEN
+          sync: false
+        - key: BOT_KEEPALIVE_PORT
+          value: "10000"
+      autoDeploy: true
+  

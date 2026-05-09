@@ -98,127 +98,6 @@ def mongo_col(name: str):
 # ID REGISTRY - MongoDB backed
 # ============================================================
 
-id_registry: dict = {}
-
-
-def load_id_registry() -> None:
-      global id_registry
-      col = mongo_col('id_registry')
-      if col is None:
-          logging.warning("MongoDB not available — id_registry will be empty.")
-          return
-      try:
-          docs = list(col.find({}, {'_id': 0}))
-          id_registry = {doc['id']: doc for doc in docs}
-          logging.info(f"id_registry loaded from MongoDB: {len(id_registry)} entries")
-      except Exception as e:
-          logging.error(f"load_id_registry MongoDB error: {e}")
-
-def save_id_registry() -> None:
-      col = mongo_col('id_registry')
-      if col is None:
-          logging.warning("MongoDB not available — id_registry not saved.")
-          return
-      try:
-          ops = []
-          for key, val in id_registry.items():
-              doc = dict(val)
-              doc['id'] = key
-              ops.append(UpdateOne({'id': key}, {'$set': doc}, upsert=True))
-          if ops:
-              col.bulk_write(ops)
-      except Exception as e:
-          logging.error(f"save_id_registry MongoDB error: {e}")
-
-def register_id(user_id: str, poster: str, value: str = "") -> dict:
-    """Register a new ID or add a poster to existing ID. Returns {'is_new': bool, 'duplicate_posters': list}"""
-    uid = str(user_id).strip()
-    if uid not in id_registry:
-        id_registry[uid] = {"id": uid, "posters": []}
-
-    existing_posters = [p['poster'] for p in id_registry[uid]['posters']]
-    is_duplicate = poster in existing_posters
-
-    if not is_duplicate:
-        id_registry[uid]['posters'].append({"poster": poster, "value": value})
-
-    save_id_registry()
-
-    col = mongo_col('id_registry')
-    if col is not None:
-        try:
-            col.update_one(
-                {'id': uid},
-                {'$set': id_registry[uid]},
-                upsert=True
-            )
-        except Exception as e:
-            logging.warning(f"MongoDB register_id update failed: {e}")
-
-    return {
-        'is_new': len(id_registry[uid]['posters']) == 1 and not is_duplicate,
-        'total_posters': len(id_registry[uid]['posters']),
-        'duplicate': is_duplicate,
-        'existing_posters': existing_posters
-    }
-
-
-def check_id_duplicate(user_id: str) -> dict:
-    """Check if an ID already has entries. Returns info about existing entries."""
-    uid = str(user_id).strip()
-    if uid not in id_registry:
-        return {'exists': False, 'posters': [], 'count': 0}
-
-    entry = id_registry[uid]
-    return {
-        'exists': True,
-        'posters': entry.get('posters', []),
-        'count': len(entry.get('posters', []))
-    }
-
-
-def get_all_duplicate_ids() -> list:
-    """Return list of IDs that have been posted by 2+ different posters."""
-    duplicates = []
-    for uid, entry in id_registry.items():
-        posters = entry.get('posters', [])
-        unique_posters = list(set(p['poster'] for p in posters))
-        if len(unique_posters) >= 2:
-            duplicates.append({
-                'id': uid,
-                'poster_count': len(unique_posters),
-                'posters': unique_posters,
-                'entries': posters
-            })
-    return sorted(duplicates, key=lambda x: x['poster_count'], reverse=True)
-
-
-def migrate_id_registry_to_mongo() -> int:
-    """Migrate existing id_registry.json data to MongoDB. Returns count of migrated entries."""
-    col = mongo_col('id_registry')
-    if col is None:
-        return 0
-    if not id_registry:
-        return 0
-    try:
-        ops = []
-        for key, val in id_registry.items():
-            doc = dict(val)
-            doc['id'] = key
-            ops.append(UpdateOne({'id': key}, {'$set': doc}, upsert=True))
-        if ops:
-            result = col.bulk_write(ops)
-            count = result.upserted_count + result.modified_count
-            logging.info(f"Migrated {count} id_registry entries to MongoDB")
-            return count
-        return 0
-    except Exception as e:
-        logging.error(f"migrate_id_registry_to_mongo error: {e}")
-        return 0
-
-
-load_id_registry()
-
 
 # ============================================================
 # PLUS COUNTER DATA - MongoDB backed
@@ -341,7 +220,6 @@ REPORT_TEMPLATE = (
     "    \n"
     "Phone number      - \n"
     "\n"
-    "ID   - \n"
     "\n"
     "Khaifa - "
 )
@@ -487,7 +365,6 @@ async def help_command(update: Update, context: CallbackContext) -> None:
         ' /reset_plus - Reset plus counter\n'
         ' /feedback - Send feedback to admin\n'
         ' /guide - Usage guide\n'
-        ' /checkid <ID> - ID စစ်ဆေး\n'
         ' /hidemenu - Hide menu\n\n'
         '🧮 Math: Bot PM တွင် expression ရိုက်ပါ (e.g. 2+2)'
     )
@@ -739,155 +616,10 @@ async def extract_and_save_data(update: Update, context: CallbackContext) -> Non
     extracted_email_phone = email_phone_match.group(1).strip() if email_phone_match else "N/A"
 
     # Extract ID field for registry check
-    id_match = re.search(r"ID\s*[-\]]?\s*(.+?)(?:\n|$)", full_text, re.IGNORECASE)
-    extracted_id = id_match.group(1).strip() if id_match else None
-
-    stored_entry = f"{extracted_date}    {extracted_khaifa}    {extracted_email_phone}"
-    today_key = get_data_key()
-
-    context.application.bot_data.setdefault('group_data', {}).setdefault(chat_id, {}).setdefault(today_key, [])
-    context.application.bot_data['group_data'][chat_id][today_key].append(stored_entry)
-
-    if context.application.persistence:
-        await context.application.persistence.flush()
-
-    sent_msg = await update.message.reply_text(stored_entry)
-
-    data_msg_map[(int(chat_id), sent_msg.message_id)] = {
-        "entry": stored_entry,
-        "date_key": today_key,
-        "chat_id": chat_id,
-    }
-    save_data_msg_map()
-
-    # ID Registry check & notify
-    if extracted_id and extracted_id not in ('', '-', 'N/A'):
-        _u = update.effective_user
-        poster_name = f"@{_u.username}" if (_u and _u.username) else (_u.full_name if _u else "Unknown")
-
-        dup_info = check_id_duplicate(extracted_id)
-        if dup_info['exists'] and dup_info['count'] > 0:
-            existing_poster_names = [p['poster'] for p in dup_info['posters']]
-            dup_list = "\n".join([f"  • {p}" for p in existing_poster_names])
-            await update.message.reply_text(
-                f"⚠️ ဤ client သည် ရောက်ပြီးသားဖြစ်ပါသည်။⚠️\n"
-                f"ID: <code>{extracted_id}</code>\n\n"
-                f"အောက်တွင်ဖော်ပြထားသည်။ဘယ်အဆင့်ရောက်နေလဲမေးမြန်းပါ။\n"
-                f"Deposit - @example\n"
-                f"Gmail - example\n\n"
-                f"မှတ်တမ်း ({dup_info['count']} ကြိမ်):\n{dup_list}",
-                parse_mode='HTML'
-            )
-
-        reg_result = register_id(extracted_id, poster_name, extracted_email_phone)
-
 
 # ============================================================
 # ID REGISTRY COMMANDS
 # ============================================================
-
-async def check_id_command(update: Update, context: CallbackContext) -> None:
-    await save_chat_id(update.effective_chat.id, context, update.effective_chat.type)
-
-    if not context.args:
-        await update.message.reply_text(
-            "❌ ID ပေးမပါ။\n\nဥပမာ: <code>/checkid 1234567890</code>",
-            parse_mode='HTML'
-        )
-        return
-
-    uid = " ".join(context.args).strip()
-    info = check_id_duplicate(uid)
-
-    if not info['exists'] or info['count'] == 0:
-        await update.message.reply_text(
-            f"✅ ID <code>{uid}</code> မှတ်တမ်းမရှိသေးပါ (အသစ်)။",
-            parse_mode='HTML'
-        )
-        return
-
-    posters = info['posters']
-    lines = []
-    for p in posters:
-        poster = p.get('poster', 'Unknown')
-        value = p.get('value', '')
-        line = f"  • {poster}"
-        if value:
-            line += f" — {value}"
-        lines.append(line)
-
-    poster_list = "\n".join(lines)
-    await update.message.reply_text(
-        f"⚠️ ဤ client သည် ရောက်ပြီးသားဖြစ်ပါသည်။⚠️\n"
-        f"ID: <code>{uid}</code>\n\n"
-        f"အောက်တွင်ဖော်ပြထားသည်။ဘယ်အဆင့်ရောက်နေလဲမေးမြန်းပါ။\n"
-        f"Deposit - @example\n"
-        f"Gmail - example\n\n"
-        f"မှတ်တမ်း ({info['count']} ကြိမ်):\n{poster_list}",
-        parse_mode='HTML'
-    )
-
-
-async def register_id_command(update: Update, context: CallbackContext) -> None:
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: /registerid <ID> [value]\nဥပမာ: /registerid 1234567890 gmail@example.com")
-        return
-
-    uid = context.args[0].strip()
-    value = " ".join(context.args[1:]).strip() if len(context.args) > 1 else ""
-    _u = update.effective_user
-    poster_name = f"@{_u.username}" if (_u and _u.username) else (_u.full_name if _u else "Admin")
-
-    result = register_id(uid, poster_name, value)
-    await update.message.reply_text(
-        f"✅ ID <code>{uid}</code> မှတ်တမ်းတင်ပြီးပါပြီ။\n"
-        f"Poster: {poster_name}\n"
-        f"စုစုပေါင်း: {result['total_posters']} ကြိမ်",
-        parse_mode='HTML'
-    )
-
-
-async def id_duplicates_command(update: Update, context: CallbackContext) -> None:
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-
-    duplicates = get_all_duplicate_ids()
-
-    if not duplicates:
-        await update.message.reply_text("✅ Duplicate ID မရှိပါ။")
-        return
-
-    lines = [f"🔁 <b>Duplicate IDs</b> ({len(duplicates)} ခု)\n"]
-    for i, dup in enumerate(duplicates[:20], 1):
-        poster_names = ", ".join(dup['posters'])
-        lines.append(f"{i}. <code>{dup['id']}</code> — {dup['poster_count']} posters\n   {poster_names}")
-
-    if len(duplicates) > 20:
-        lines.append(f"\n... နှင့် {len(duplicates) - 20} ခု ထပ်ရှိသေးသည်")
-
-    await update.message.reply_text("\n".join(lines), parse_mode='HTML')
-
-
-async def migrate_command(update: Update, context: CallbackContext) -> None:
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-
-    await update.message.reply_text("⏳ MongoDB ထဲ data migrate လုပ်နေသည်...")
-
-    count = migrate_id_registry_to_mongo()
-    db = get_mongo_db()
-    mongo_ok = db is not None
-
-    await update.message.reply_text(
-        f"✅ Migration ပြီးပါပြီ!\n\n"
-        f"MongoDB: {'✅ ချိတ်ဆက်ပြီး' if mongo_ok else '❌ ချိတ်ဆက်မရ'}\n"
-        f"ID Registry: {count} entries migrated\n"
-        f"Total in memory: {len(id_registry)} entries",
-        parse_mode='HTML'
-    )
-
 
 # ============================================================
 # FEEDBACK
@@ -1131,7 +863,6 @@ async def stats(update: Update, context: CallbackContext) -> None:
     user_count = len(context.application.bot_data.get('users', set()))
     group_count = len(context.application.bot_data.get('groups', set()))
 
-    total_ids = len(id_registry)
     duplicates = get_all_duplicate_ids()
     dup_count = len(duplicates)
 
@@ -1194,7 +925,7 @@ async def admin_panel_callback(update: Update, context: CallbackContext) -> None
         db = get_mongo_db()
         mongo_status = "✅" if db is not None else "❌"
         await query.edit_message_text(
-            f"📊 Users: {user_count}\nGroups: {group_count}\n🆔 IDs: {len(id_registry)}\n🔁 Duplicates: {dup_count}\n🗄️ MongoDB: {mongo_status}"
+            f"📊 Users: {user_count}\nGroups: {group_count}\n🔁 Duplicates: {dup_count}\n🗄️ MongoDB: {mongo_status}"
         )
     elif data == 'adm_groups':
         groups = context.application.bot_data.get('groups', set())
@@ -1211,7 +942,6 @@ async def admin_panel_callback(update: Update, context: CallbackContext) -> None
                 poster_names = ", ".join(dup['posters'])
                 lines.append(f"{i}. <code>{dup['id']}</code> — {dup['poster_count']} posters\n   {poster_names}")
             if len(duplicates) > 10:
-                lines.append(f"\n/idduplicates ဖြင့် အားလုံးကြည့်ပါ")
             await query.edit_message_text("\n".join(lines), parse_mode='HTML')
     elif data == 'adm_botsettings':
         await _bot_settings_inline(query, context)
@@ -1954,7 +1684,7 @@ async def reset_plus_command(update: Update, context: CallbackContext) -> None:
 
 GUIDE_PAGES = [
     {
-        "title": "📖 Bot လမ်းညွှန် (1/6) — Report Form",
+        "title": "📖 Bot လမ်းညွှန် (1/5) — Report Form",
         "text": (
             "<b>📋 Report Form ပုံစံ</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -1973,22 +1703,7 @@ GUIDE_PAGES = [
         ),
     },
     {
-        "title": "📖 Bot လမ်းညွှန် (2/6) — ID စစ်ဆေးစနစ်",
-        "text": (
-            "<b>🆔 ID စစ်ဆေးစနစ်</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Report ပို့သည်နှင့် ID ကို <b>အလိုအလျောက်</b> စစ်ဆေးသည်။\n\n"
-            "⚠️ ရောက်ပြီးသား client ဆိုပါက bot က ချက်ချင်း အသိပေးမည်:\n\n"
-            "<i>⚠️ ဤ client သည် ရောက်ပြီးသားဖြစ်ပါသည်။\n"
-            "ဘယ်အဆင့်ရောက်နေလဲမေးမြန်းပါ။</i>\n\n"
-            "<b>သီးသန့်စစ်ဆေးနည်း:</b>\n"
-            "<code>/checkid &lt;ID&gt;</code>\n"
-            "ဥပမာ: <code>/checkid 1234567890</code>\n\n"
-            "ကျွမ်းကျင်သူများ admin panel မှ ID record ကြည့်နိုင်သည်။"
-        ),
-    },
-    {
-        "title": "📖 Bot လမ်းညွှန် (3/6) — Data စီမံခန့်ခွဲမှု",
+        "title": "📖 Bot လမ်းညွှန် (2/5) — Data စီမံခန့်ခွဲမှု",
         "text": (
             "<b>📊 Data စီမံခန့်ခွဲမှု</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -2005,7 +1720,7 @@ GUIDE_PAGES = [
         ),
     },
     {
-        "title": "📖 Bot လမ်းညွှန် (4/6) — Plus Counter",
+        "title": "📖 Bot လမ်းညွှန် (3/5) — Plus Counter",
         "text": (
             "<b>➕ Plus Counter စနစ်</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -2020,7 +1735,7 @@ GUIDE_PAGES = [
         ),
     },
     {
-        "title": "📖 Bot လမ်းညွှန် (5/6) — ✉️ Feedback & Menu",
+        "title": "📖 Bot လမ်းညွှန် (4/5) — ✉️ Feedback & Menu",
         "text": (
             "<b>✉️ Feedback ပေးပို့နည်း</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -2035,7 +1750,7 @@ GUIDE_PAGES = [
         ),
     },
     {
-        "title": "📖 Bot လမ်းညွှန် (6/6) — ⚠️ Duplicate ID သတိပေးပုံ",
+        "title": "📖 Bot လမ်းညွှန် (5/5) — ⚠️ Duplicate ID သတိပေးပုံ",
         "text": (
             "<b>⚠️ ID Duplicate သတိပေးပုံစံ</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -2100,7 +1815,6 @@ async def post_init(application: Application) -> None:
         BotCommand("showdata",       "ယနေ့ data ကြည့်"),
         BotCommand("cleardata",      "ယနေ့ data ဖျက်"),
         BotCommand("form",           "Report template"),
-        BotCommand("checkid",        "ID စစ်ဆေး"),
         BotCommand("total_plus",     "Plus counter ကြည့်"),
         BotCommand("reset_plus",     "Plus counter ရှင်း"),
         BotCommand("feedback",       "Admin ထံ မှတ်ချက်"),
@@ -2110,8 +1824,6 @@ async def post_init(application: Application) -> None:
         BotCommand("listusers",      "User list (Admin)"),
         BotCommand("listgroups",     "Group list (Admin)"),
         BotCommand("listschedules",  "Schedule list (Admin)"),
-        BotCommand("idduplicates",   "Duplicate IDs (Admin)"),
-        BotCommand("migrate",        "MongoDB migrate (Admin)"),
         BotCommand("admin",          "Admin panel (Admin)"),
         BotCommand("clearall",       "Data အားလုံး ရှင်း (Admin PM)"),
         BotCommand("resetplusall",   "Plus counter အားလုံး reset (Admin PM)"),
@@ -2217,10 +1929,6 @@ def main():
     application.add_handler(CommandHandler("whatsapp_total", whatsapp_total_command))
     application.add_handler(CommandHandler("total_plus", total_plus_command))
     application.add_handler(CommandHandler("reset_plus", reset_plus_command))
-    application.add_handler(CommandHandler("checkid", check_id_command))
-    application.add_handler(CommandHandler("registerid", register_id_command))
-    application.add_handler(CommandHandler("idduplicates", id_duplicates_command))
-    application.add_handler(CommandHandler("migrate", migrate_command))
 
     application.add_handler(CallbackQueryHandler(clear_group_data_callback, pattern=r'^admin_clear_-?\d+$'))
     application.add_handler(CallbackQueryHandler(cancel_group_action, pattern='^admin_cancel$'))

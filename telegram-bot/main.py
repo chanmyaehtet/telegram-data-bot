@@ -239,86 +239,86 @@ def _str_to_plus_key(s: str) -> tuple:
 
 
 def save_plus_data() -> None:
-      col = mongo_col('plus_data')
-      if col is None:
-          logging.warning("MongoDB not available — plus_data not saved.")
-          return
-      try:
-          data = {
-              "counters":     {_plus_key_to_str(k): v for k, v in plus_counters.items()},
-              "names":        {str(k): v for k, v in plus_names.items()},
-              "counted_msgs": {_plus_key_to_str(k): v for k, v in plus_counted_msgs.items()},
-          }
-          col.update_one({'_type': 'plus_data'}, {'$set': {'_type': 'plus_data', **data}}, upsert=True)
-      except Exception as e:
-          logging.error(f"save_plus_data MongoDB error: {e}")
+    col = mongo_col('plus_data')
+    if col is None:
+        logging.warning("MongoDB not available — plus_data not saved.")
+        return
+    try:
+        data = {
+            "counters":     {_plus_key_to_str(k): v for k, v in plus_counters.items()},
+            "names":        {str(k): v for k, v in plus_names.items()},
+            "counted_msgs": {_plus_key_to_str(k): v for k, v in plus_counted_msgs.items()},
+        }
+        col.update_one({'_type': 'plus_data'}, {'$set': {'_type': 'plus_data', **data}}, upsert=True)
+    except Exception as e:
+        logging.error(f"save_plus_data MongoDB error: {e}")
 
 
-  def load_plus_data() -> None:
-      global plus_counters, plus_names, plus_counted_msgs
-      col = mongo_col('plus_data')
-      if col is None:
-          logging.warning("MongoDB not available — plus_data will be empty.")
-          return
-      try:
-          doc = col.find_one({'_type': 'plus_data'})
-          if doc:
-              plus_counters = {_str_to_plus_key(k): v for k, v in doc.get("counters", {}).items()}
-              plus_names = {int(k): v for k, v in doc.get("names", {}).items()}
-              raw_msgs = doc.get("counted_msgs", {})
-              plus_counted_msgs = {} if isinstance(raw_msgs, list) else {_str_to_plus_key(k): v for k, v in raw_msgs.items()}
-              logging.info(f"plus_data loaded from MongoDB: {len(plus_counters)} counters")
-      except Exception as e:
-          logging.error(f"load_plus_data MongoDB error: {e}")
+def load_plus_data() -> None:
+    global plus_counters, plus_names, plus_counted_msgs
+    col = mongo_col('plus_data')
+    if col is None:
+        logging.warning("MongoDB not available — plus_data will be empty.")
+        return
+    try:
+        doc = col.find_one({'_type': 'plus_data'})
+        if doc:
+            plus_counters = {_str_to_plus_key(k): v for k, v in doc.get("counters", {}).items()}
+            plus_names = {int(k): v for k, v in doc.get("names", {}).items()}
+            raw_msgs = doc.get("counted_msgs", {})
+            plus_counted_msgs = {} if isinstance(raw_msgs, list) else {_str_to_plus_key(k): v for k, v in raw_msgs.items()}
+            logging.info(f"plus_data loaded from MongoDB: {len(plus_counters)} counters")
+    except Exception as e:
+        logging.error(f"load_plus_data MongoDB error: {e}")
 
 
-  load_plus_data()
+load_plus_data()
 
 
-  # ============================================================
-  # DATA MSG MAP - MongoDB backed
-  # ============================================================
-  data_msg_map: dict = {}
+# ============================================================
+# DATA MSG MAP - MongoDB backed
+# ============================================================
+data_msg_map: dict = {}
 
 
-  def _data_key_to_str(key: tuple) -> str:
-      return f"{key[0]}:{key[1]}"
+def _data_key_to_str(key: tuple) -> str:
+    return f"{key[0]}:{key[1]}"
 
 
-  def _str_to_data_key(s: str) -> tuple:
-      parts = s.split(":", 1)
-      return (int(parts[0]), int(parts[1]))
+def _str_to_data_key(s: str) -> tuple:
+    parts = s.split(":", 1)
+    return (int(parts[0]), int(parts[1]))
 
 
-  def save_data_msg_map() -> None:
-      col = mongo_col('data_msg_map')
-      if col is None:
-          logging.warning("MongoDB not available — data_msg_map not saved.")
-          return
-      try:
-          serializable = {_data_key_to_str(k): v for k, v in data_msg_map.items()}
-          col.update_one({'_type': 'data_msg_map'}, {'$set': {'_type': 'data_msg_map', 'data': serializable}}, upsert=True)
-      except Exception as e:
-          logging.error(f"save_data_msg_map MongoDB error: {e}")
+def save_data_msg_map() -> None:
+    col = mongo_col('data_msg_map')
+    if col is None:
+        logging.warning("MongoDB not available — data_msg_map not saved.")
+        return
+    try:
+        serializable = {_data_key_to_str(k): v for k, v in data_msg_map.items()}
+        col.update_one({'_type': 'data_msg_map'}, {'$set': {'_type': 'data_msg_map', 'data': serializable}}, upsert=True)
+    except Exception as e:
+        logging.error(f"save_data_msg_map MongoDB error: {e}")
 
 
-  def load_data_msg_map() -> None:
-      global data_msg_map
-      col = mongo_col('data_msg_map')
-      if col is None:
-          logging.warning("MongoDB not available — data_msg_map will be empty.")
-          return
-      try:
-          doc = col.find_one({'_type': 'data_msg_map'})
-          if doc:
-              raw = doc.get('data', {})
-              data_msg_map = {_str_to_data_key(k): v for k, v in raw.items()}
-              logging.info(f"data_msg_map loaded from MongoDB: {len(data_msg_map)} entries")
-      except Exception as e:
-          logging.error(f"load_data_msg_map MongoDB error: {e}")
+def load_data_msg_map() -> None:
+    global data_msg_map
+    col = mongo_col('data_msg_map')
+    if col is None:
+        logging.warning("MongoDB not available — data_msg_map will be empty.")
+        return
+    try:
+        doc = col.find_one({'_type': 'data_msg_map'})
+        if doc:
+            raw = doc.get('data', {})
+            data_msg_map = {_str_to_data_key(k): v for k, v in raw.items()}
+            logging.info(f"data_msg_map loaded from MongoDB: {len(data_msg_map)} entries")
+    except Exception as e:
+        logging.error(f"load_data_msg_map MongoDB error: {e}")
 
 
-  load_data_msg_map()
+load_data_msg_map()
   
 
 
@@ -2052,41 +2052,41 @@ async def reset_plus_command(update: Update, context: CallbackContext) -> None:
   ]
 
 
-  def _guide_keyboard(page: int) -> InlineKeyboardMarkup:
-      total = len(GUIDE_PAGES)
-      row = []
-      if page > 0:
-          row.append(InlineKeyboardButton("⬅️ Back", callback_data=f"guide_page_{page - 1}"))
-      row.append(InlineKeyboardButton("🏠 Home", callback_data="guide_page_0"))
-      if page < total - 1:
-          row.append(InlineKeyboardButton("Next ➡️", callback_data=f"guide_page_{page + 1}"))
-      return InlineKeyboardMarkup([row])
+def _guide_keyboard(page: int) -> InlineKeyboardMarkup:
+    total = len(GUIDE_PAGES)
+    row = []
+    if page > 0:
+        row.append(InlineKeyboardButton("⬅️ Back", callback_data=f"guide_page_{page - 1}"))
+    row.append(InlineKeyboardButton("🏠 Home", callback_data="guide_page_0"))
+    if page < total - 1:
+        row.append(InlineKeyboardButton("Next ➡️", callback_data=f"guide_page_{page + 1}"))
+    return InlineKeyboardMarkup([row])
 
 
-  async def guide_command(update: Update, context: CallbackContext) -> None:
-      await save_chat_id(update.effective_chat.id, context, update.effective_chat.type)
-      page = GUIDE_PAGES[0]
-      await update.message.reply_text(
-          f"{page['title']}\n━━━━━━━━━━━━━━━━━━━━\n\n{page['text']}",
-          parse_mode='HTML',
-          reply_markup=_guide_keyboard(0)
-      )
+async def guide_command(update: Update, context: CallbackContext) -> None:
+    await save_chat_id(update.effective_chat.id, context, update.effective_chat.type)
+    page = GUIDE_PAGES[0]
+    await update.message.reply_text(
+        f"{page['title']}\n━━━━━━━━━━━━━━━━━━━━\n\n{page['text']}",
+        parse_mode='HTML',
+        reply_markup=_guide_keyboard(0)
+    )
 
 
-  async def guide_callback(update: Update, context: CallbackContext) -> None:
-      query = update.callback_query
-      await query.answer()
-      page_idx = int(query.data.split("_")[-1])
-      if page_idx < 0 or page_idx >= len(GUIDE_PAGES):
-          return
-      page = GUIDE_PAGES[page_idx]
-      await query.edit_message_text(
-          f"{page['title']}\n━━━━━━━━━━━━━━━━━━━━\n\n{page['text']}",
-          parse_mode='HTML',
-          reply_markup=_guide_keyboard(page_idx)
-      )
+async def guide_callback(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
+    page_idx = int(query.data.split("_")[-1])
+    if page_idx < 0 or page_idx >= len(GUIDE_PAGES):
+        return
+    page = GUIDE_PAGES[page_idx]
+    await query.edit_message_text(
+        f"{page['title']}\n━━━━━━━━━━━━━━━━━━━━\n\n{page['text']}",
+        parse_mode='HTML',
+        reply_markup=_guide_keyboard(page_idx)
+    )
 
-  
+
 
 # POST INIT
 # ============================================================

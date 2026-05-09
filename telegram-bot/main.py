@@ -1616,8 +1616,8 @@ async def reset_plus_command(update: Update, context: CallbackContext) -> None:
     save_plus_data()
 
     await update.message.reply_text(
-        f"✅ Plus counter reset ပြုလုပ်ပြီးပါ။\n"
-        f"🗑️ ဤ chat ထဲးမှာ အဖြဲ့ဝင် {len(keys_to_del)} ဤးသာ ရေတွက်မှတ်သာသာမြာရမ်လည်လည်မစကေပြန်ပါ။"
+        f"✅ Plus counter reset ပြုလုပ်ပြီးပါပြီ။\n"
+        f"🗑️ ဤ chat ရှိ အဖွဲ့ဝင် {len(keys_to_del)} ဦး၏ ကောင်တာများ ပြန်လည်သုညမှ စတင်ပြီ။"
     )
 
 

@@ -2,10 +2,11 @@ services:
   - type: web
     name: telegram-bot
     runtime: python
-    rootDir: telegram-bot
     buildCommand: pip install -r requirements.txt
-    startCommand: python3 main.py
+    startCommand: python3 telegram-bot/main.py
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
+      - key: BOT_KEEPALIVE_PORT
+        value: "10000"
     autoDeploy: true

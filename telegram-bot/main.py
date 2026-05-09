@@ -15,6 +15,14 @@ try:
 except Exception:
     langdetect_detect = None
 
+try:
+    from pymongo import MongoClient, UpdateOne
+    from pymongo.errors import ConnectionFailure, OperationFailure
+    MONGO_AVAILABLE = True
+except ImportError:
+    MONGO_AVAILABLE = False
+    logging.warning("pymongo not installed. MongoDB features disabled.")
+
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ConversationHandler,
@@ -36,6 +44,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+MONGO_URI = os.getenv('MONGO_URI', 'mongodb+srv://zhengduo1539_db_user:jbDcpW77Sbbh3KXI@cluster0.l26dlgi.mongodb.net/?appName=Cluster0')
 
 ADMIN_IDS = [7196380140, 1827336632, 7039073770]
 
@@ -54,7 +63,188 @@ BOT_SETTINGS_AWAITING = 41
 
 
 # ============================================================
-# PLUS COUNTER DATA
+# MONGODB CONNECTION
+# ============================================================
+
+_mongo_client = None
+_mongo_db = None
+
+
+def get_mongo_db():
+    global _mongo_client, _mongo_db
+    if not MONGO_AVAILABLE:
+        return None
+    if _mongo_db is not None:
+        return _mongo_db
+    try:
+        _mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        _mongo_client.admin.command('ping')
+        _mongo_db = _mongo_client['telegram_bot_db']
+        logging.info("MongoDB Atlas connected successfully.")
+        return _mongo_db
+    except Exception as e:
+        logging.error(f"MongoDB connection failed: {e}")
+        return None
+
+
+def mongo_col(name: str):
+    db = get_mongo_db()
+    if db is None:
+        return None
+    return db[name]
+
+
+# ============================================================
+# ID REGISTRY - MongoDB backed
+# ============================================================
+
+ID_REGISTRY_FILE = os.path.join(os.path.dirname(__file__), "id_registry.json")
+
+id_registry: dict = {}
+
+
+def load_id_registry() -> None:
+    global id_registry
+
+    col = mongo_col('id_registry')
+    if col is not None:
+        try:
+            docs = list(col.find({}, {'_id': 0}))
+            id_registry = {doc['id']: doc for doc in docs}
+            logging.info(f"id_registry loaded from MongoDB: {len(id_registry)} entries")
+            return
+        except Exception as e:
+            logging.warning(f"MongoDB id_registry load failed, using file: {e}")
+
+    for path in [ID_REGISTRY_FILE, ID_REGISTRY_FILE + ".tmp"]:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            id_registry = data
+            logging.info(f"id_registry loaded from file: {len(id_registry)} entries")
+            return
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            logging.warning(f"load_id_registry error ({path}): {e}")
+
+
+def save_id_registry() -> None:
+    col = mongo_col('id_registry')
+    if col is not None:
+        try:
+            ops = []
+            for key, val in id_registry.items():
+                doc = dict(val)
+                doc['id'] = key
+                ops.append(UpdateOne({'id': key}, {'$set': doc}, upsert=True))
+            if ops:
+                col.bulk_write(ops)
+            return
+        except Exception as e:
+            logging.warning(f"MongoDB id_registry save failed, using file: {e}")
+
+    tmp_path = ID_REGISTRY_FILE + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(id_registry, f, ensure_ascii=False)
+        os.replace(tmp_path, ID_REGISTRY_FILE)
+    except Exception as e:
+        logging.warning(f"save_id_registry file error: {e}")
+
+
+def register_id(user_id: str, poster: str, value: str = "") -> dict:
+    """Register a new ID or add a poster to existing ID. Returns {'is_new': bool, 'duplicate_posters': list}"""
+    uid = str(user_id).strip()
+    if uid not in id_registry:
+        id_registry[uid] = {"id": uid, "posters": []}
+
+    existing_posters = [p['poster'] for p in id_registry[uid]['posters']]
+    is_duplicate = poster in existing_posters
+
+    if not is_duplicate:
+        id_registry[uid]['posters'].append({"poster": poster, "value": value})
+
+    save_id_registry()
+
+    col = mongo_col('id_registry')
+    if col is not None:
+        try:
+            col.update_one(
+                {'id': uid},
+                {'$set': id_registry[uid]},
+                upsert=True
+            )
+        except Exception as e:
+            logging.warning(f"MongoDB register_id update failed: {e}")
+
+    return {
+        'is_new': len(id_registry[uid]['posters']) == 1 and not is_duplicate,
+        'total_posters': len(id_registry[uid]['posters']),
+        'duplicate': is_duplicate,
+        'existing_posters': existing_posters
+    }
+
+
+def check_id_duplicate(user_id: str) -> dict:
+    """Check if an ID already has entries. Returns info about existing entries."""
+    uid = str(user_id).strip()
+    if uid not in id_registry:
+        return {'exists': False, 'posters': [], 'count': 0}
+
+    entry = id_registry[uid]
+    return {
+        'exists': True,
+        'posters': entry.get('posters', []),
+        'count': len(entry.get('posters', []))
+    }
+
+
+def get_all_duplicate_ids() -> list:
+    """Return list of IDs that have been posted by 2+ different posters."""
+    duplicates = []
+    for uid, entry in id_registry.items():
+        posters = entry.get('posters', [])
+        unique_posters = list(set(p['poster'] for p in posters))
+        if len(unique_posters) >= 2:
+            duplicates.append({
+                'id': uid,
+                'poster_count': len(unique_posters),
+                'posters': unique_posters,
+                'entries': posters
+            })
+    return sorted(duplicates, key=lambda x: x['poster_count'], reverse=True)
+
+
+def migrate_id_registry_to_mongo() -> int:
+    """Migrate existing id_registry.json data to MongoDB. Returns count of migrated entries."""
+    col = mongo_col('id_registry')
+    if col is None:
+        return 0
+    if not id_registry:
+        return 0
+    try:
+        ops = []
+        for key, val in id_registry.items():
+            doc = dict(val)
+            doc['id'] = key
+            ops.append(UpdateOne({'id': key}, {'$set': doc}, upsert=True))
+        if ops:
+            result = col.bulk_write(ops)
+            count = result.upserted_count + result.modified_count
+            logging.info(f"Migrated {count} id_registry entries to MongoDB")
+            return count
+        return 0
+    except Exception as e:
+        logging.error(f"migrate_id_registry_to_mongo error: {e}")
+        return 0
+
+
+load_id_registry()
+
+
+# ============================================================
+# PLUS COUNTER DATA - MongoDB backed
 # ============================================================
 PLUS_DATA_FILE = os.path.join(os.path.dirname(__file__), "plus_data.json")
 
@@ -73,6 +263,19 @@ def _str_to_plus_key(s: str) -> tuple:
 
 
 def save_plus_data() -> None:
+    col = mongo_col('plus_data')
+    if col is not None:
+        try:
+            data = {
+                "counters":     {_plus_key_to_str(k): v for k, v in plus_counters.items()},
+                "names":        {str(k): v for k, v in plus_names.items()},
+                "counted_msgs": {_plus_key_to_str(k): v for k, v in plus_counted_msgs.items()},
+            }
+            col.update_one({'_type': 'plus_data'}, {'$set': {'_type': 'plus_data', **data}}, upsert=True)
+            return
+        except Exception as e:
+            logging.warning(f"MongoDB save_plus_data failed, using file: {e}")
+
     tmp_path = PLUS_DATA_FILE + ".tmp"
     try:
         data = {
@@ -89,6 +292,21 @@ def save_plus_data() -> None:
 
 def load_plus_data() -> None:
     global plus_counters, plus_names, plus_counted_msgs
+
+    col = mongo_col('plus_data')
+    if col is not None:
+        try:
+            doc = col.find_one({'_type': 'plus_data'})
+            if doc:
+                plus_counters = {_str_to_plus_key(k): v for k, v in doc.get("counters", {}).items()}
+                plus_names = {int(k): v for k, v in doc.get("names", {}).items()}
+                raw_msgs = doc.get("counted_msgs", {})
+                plus_counted_msgs = {} if isinstance(raw_msgs, list) else {_str_to_plus_key(k): v for k, v in raw_msgs.items()}
+                logging.info(f"plus_data loaded from MongoDB: {len(plus_counters)} counters")
+                return
+        except Exception as e:
+            logging.warning(f"MongoDB load_plus_data failed, using file: {e}")
+
     for path in [PLUS_DATA_FILE, PLUS_DATA_FILE + ".tmp"]:
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -100,7 +318,7 @@ def load_plus_data() -> None:
                 plus_counted_msgs = {}
             else:
                 plus_counted_msgs = {_str_to_plus_key(k): v for k, v in raw_msgs.items()}
-            logging.info(f"plus_data loaded: {len(plus_counters)} counters")
+            logging.info(f"plus_data loaded from file: {len(plus_counters)} counters")
             return
         except FileNotFoundError:
             continue
@@ -112,7 +330,7 @@ load_plus_data()
 
 
 # ============================================================
-# DATA MSG MAP
+# DATA MSG MAP - MongoDB backed
 # ============================================================
 DATA_MSG_MAP_FILE = os.path.join(os.path.dirname(__file__), "data_msg_map.json")
 data_msg_map: dict = {}
@@ -128,6 +346,15 @@ def _str_to_data_key(s: str) -> tuple:
 
 
 def save_data_msg_map() -> None:
+    col = mongo_col('data_msg_map')
+    if col is not None:
+        try:
+            serializable = {_data_key_to_str(k): v for k, v in data_msg_map.items()}
+            col.update_one({'_type': 'data_msg_map'}, {'$set': {'_type': 'data_msg_map', 'data': serializable}}, upsert=True)
+            return
+        except Exception as e:
+            logging.warning(f"MongoDB save_data_msg_map failed, using file: {e}")
+
     tmp_path = DATA_MSG_MAP_FILE + ".tmp"
     try:
         serializable = {_data_key_to_str(k): v for k, v in data_msg_map.items()}
@@ -140,12 +367,25 @@ def save_data_msg_map() -> None:
 
 def load_data_msg_map() -> None:
     global data_msg_map
+
+    col = mongo_col('data_msg_map')
+    if col is not None:
+        try:
+            doc = col.find_one({'_type': 'data_msg_map'})
+            if doc:
+                raw = doc.get('data', {})
+                data_msg_map = {_str_to_data_key(k): v for k, v in raw.items()}
+                logging.info(f"data_msg_map loaded from MongoDB: {len(data_msg_map)} entries")
+                return
+        except Exception as e:
+            logging.warning(f"MongoDB load_data_msg_map failed, using file: {e}")
+
     for path in [DATA_MSG_MAP_FILE, DATA_MSG_MAP_FILE + ".tmp"]:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
             data_msg_map = {_str_to_data_key(k): v for k, v in raw.items()}
-            logging.info(f"data_msg_map loaded: {len(data_msg_map)} entries")
+            logging.info(f"data_msg_map loaded from file: {len(data_msg_map)} entries")
             return
         except FileNotFoundError:
             continue
@@ -224,7 +464,6 @@ async def save_chat_id(chat_id: int, context: CallbackContext, chat_type: str) -
 # ============================================================
 
 async def notify_admins_error(context: CallbackContext, error_text: str) -> None:
-    """Send error notification to all admins via PM."""
     msg = (
         f"⚠️ <b>Bot Error Alert</b>\n\n"
         f"<pre>{error_text[:3000]}</pre>"
@@ -321,6 +560,7 @@ async def help_command(update: Update, context: CallbackContext) -> None:
         ' /reset_plus - Reset plus counter\n'
         ' /feedback - Send feedback to admin\n'
         ' /guide - Usage guide\n'
+        ' /checkid <ID> - ID စစ်ဆေး\n'
         ' /hidemenu - Hide menu\n\n'
         '🧮 Math: Bot PM တွင် expression ရိုက်ပါ (e.g. 2+2)'
     )
@@ -362,7 +602,6 @@ async def remove_menu(update: Update, context: CallbackContext) -> None:
         "Menu keyboard ကို ဖျက်လိုက်ပါပြီ။ /start ဖြင့် ပြန်ခေါ်နိုင်ပါသည်။😒",
         reply_markup=ReplyKeyboardRemove()
     )
-
 
 
 async def clear_data(update: Update, context: CallbackContext) -> None:
@@ -572,6 +811,10 @@ async def extract_and_save_data(update: Update, context: CallbackContext) -> Non
     email_phone_match = re.search(r"(?:Gmail|Email|Phone number|Phone)\s*[-\]]?\s*(.+?)(?:\n|$)", full_text, re.IGNORECASE)
     extracted_email_phone = email_phone_match.group(1).strip() if email_phone_match else "N/A"
 
+    # Extract ID field for registry check
+    id_match = re.search(r"ID\s*[-\]]?\s*(.+?)(?:\n|$)", full_text, re.IGNORECASE)
+    extracted_id = id_match.group(1).strip() if id_match else None
+
     stored_entry = f"{extracted_date}    {extracted_khaifa}    {extracted_email_phone}"
     today_key = get_data_key()
 
@@ -589,6 +832,134 @@ async def extract_and_save_data(update: Update, context: CallbackContext) -> Non
         "chat_id": chat_id,
     }
     save_data_msg_map()
+
+    # ID Registry check & notify
+    if extracted_id and extracted_id not in ('', '-', 'N/A'):
+        _u = update.effective_user
+        poster_name = f"@{_u.username}" if (_u and _u.username) else (_u.full_name if _u else "Unknown")
+
+        dup_info = check_id_duplicate(extracted_id)
+        if dup_info['exists'] and dup_info['count'] > 0:
+            existing_poster_names = [p['poster'] for p in dup_info['posters']]
+            dup_list = "\n".join([f"  • {p}" for p in existing_poster_names])
+            await update.message.reply_text(
+                f"⚠️ ဤ client သည် ရောက်ပြီးသားဖြစ်ပါသည်။⚠️\n"
+                f"ID: <code>{extracted_id}</code>\n\n"
+                f"အောက်တွင်ဖော်ပြထားသည်။ဘယ်အဆင့်ရောက်နေလဲမေးမြန်းပါ။\n"
+                f"Deposit - @example\n"
+                f"Gmail - example\n\n"
+                f"မှတ်တမ်း ({dup_info['count']} ကြိမ်):\n{dup_list}",
+                parse_mode='HTML'
+            )
+
+        reg_result = register_id(extracted_id, poster_name, extracted_email_phone)
+
+
+# ============================================================
+# ID REGISTRY COMMANDS
+# ============================================================
+
+async def check_id_command(update: Update, context: CallbackContext) -> None:
+    await save_chat_id(update.effective_chat.id, context, update.effective_chat.type)
+
+    if not context.args:
+        await update.message.reply_text(
+            "❌ ID ပေးမပါ။\n\nဥပမာ: <code>/checkid 1234567890</code>",
+            parse_mode='HTML'
+        )
+        return
+
+    uid = " ".join(context.args).strip()
+    info = check_id_duplicate(uid)
+
+    if not info['exists'] or info['count'] == 0:
+        await update.message.reply_text(
+            f"✅ ID <code>{uid}</code> မှတ်တမ်းမရှိသေးပါ (အသစ်)။",
+            parse_mode='HTML'
+        )
+        return
+
+    posters = info['posters']
+    lines = []
+    for p in posters:
+        poster = p.get('poster', 'Unknown')
+        value = p.get('value', '')
+        line = f"  • {poster}"
+        if value:
+            line += f" — {value}"
+        lines.append(line)
+
+    poster_list = "\n".join(lines)
+    await update.message.reply_text(
+        f"⚠️ ဤ client သည် ရောက်ပြီးသားဖြစ်ပါသည်။⚠️\n"
+        f"ID: <code>{uid}</code>\n\n"
+        f"အောက်တွင်ဖော်ပြထားသည်။ဘယ်အဆင့်ရောက်နေလဲမေးမြန်းပါ။\n"
+        f"Deposit - @example\n"
+        f"Gmail - example\n\n"
+        f"မှတ်တမ်း ({info['count']} ကြိမ်):\n{poster_list}",
+        parse_mode='HTML'
+    )
+
+
+async def register_id_command(update: Update, context: CallbackContext) -> None:
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: /registerid <ID> [value]\nဥပမာ: /registerid 1234567890 gmail@example.com")
+        return
+
+    uid = context.args[0].strip()
+    value = " ".join(context.args[1:]).strip() if len(context.args) > 1 else ""
+    _u = update.effective_user
+    poster_name = f"@{_u.username}" if (_u and _u.username) else (_u.full_name if _u else "Admin")
+
+    result = register_id(uid, poster_name, value)
+    await update.message.reply_text(
+        f"✅ ID <code>{uid}</code> မှတ်တမ်းတင်ပြီးပါပြီ။\n"
+        f"Poster: {poster_name}\n"
+        f"စုစုပေါင်း: {result['total_posters']} ကြိမ်",
+        parse_mode='HTML'
+    )
+
+
+async def id_duplicates_command(update: Update, context: CallbackContext) -> None:
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    duplicates = get_all_duplicate_ids()
+
+    if not duplicates:
+        await update.message.reply_text("✅ Duplicate ID မရှိပါ။")
+        return
+
+    lines = [f"🔁 <b>Duplicate IDs</b> ({len(duplicates)} ခု)\n"]
+    for i, dup in enumerate(duplicates[:20], 1):
+        poster_names = ", ".join(dup['posters'])
+        lines.append(f"{i}. <code>{dup['id']}</code> — {dup['poster_count']} posters\n   {poster_names}")
+
+    if len(duplicates) > 20:
+        lines.append(f"\n... နှင့် {len(duplicates) - 20} ခု ထပ်ရှိသေးသည်")
+
+    await update.message.reply_text("\n".join(lines), parse_mode='HTML')
+
+
+async def migrate_command(update: Update, context: CallbackContext) -> None:
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    await update.message.reply_text("⏳ MongoDB ထဲ data migrate လုပ်နေသည်...")
+
+    count = migrate_id_registry_to_mongo()
+    db = get_mongo_db()
+    mongo_ok = db is not None
+
+    await update.message.reply_text(
+        f"✅ Migration ပြီးပါပြီ!\n\n"
+        f"MongoDB: {'✅ ချိတ်ဆက်ပြီး' if mongo_ok else '❌ ချိတ်ဆက်မရ'}\n"
+        f"ID Registry: {count} entries migrated\n"
+        f"Total in memory: {len(id_registry)} entries",
+        parse_mode='HTML'
+    )
 
 
 # ============================================================
@@ -833,10 +1204,32 @@ async def stats(update: Update, context: CallbackContext) -> None:
     user_count = len(context.application.bot_data.get('users', set()))
     group_count = len(context.application.bot_data.get('groups', set()))
 
+    total_ids = len(id_registry)
+    duplicates = get_all_duplicate_ids()
+    dup_count = len(duplicates)
+
+    db = get_mongo_db()
+    mongo_status = "✅ ချိတ်ဆက်ပြီး" if db is not None else "❌ ချိတ်ဆက်မရ"
+
+    dup_preview = ""
+    if duplicates:
+        top5 = duplicates[:5]
+        lines = []
+        for d in top5:
+            lines.append(f"  • <code>{d['id']}</code> ({d['poster_count']} posters)")
+        dup_preview = "\n\n🔁 <b>Top Duplicate IDs:</b>\n" + "\n".join(lines)
+        if dup_count > 5:
+            dup_preview += f"\n  ... နှင့် {dup_count - 5} ခု ထပ်ရှိ"
+
     await update.message.reply_text(
         f"📊 <b>Bot Statistics</b>\n\n"
         f"👤 Users (PM): {user_count}\n"
-        f"👥 Groups: {group_count}",
+        f"👥 Groups: {group_count}\n\n"
+        f"🆔 <b>ID Registry</b>\n"
+        f"  စုစုပေါင်း IDs: {total_ids}\n"
+        f"  Duplicate IDs: {dup_count}\n\n"
+        f"🗄️ MongoDB: {mongo_status}"
+        f"{dup_preview}",
         parse_mode='HTML'
     )
 
@@ -849,6 +1242,7 @@ async def admin_command(update: Update, context: CallbackContext) -> None:
         [InlineKeyboardButton("📊 Stats", callback_data='adm_stats'),
          InlineKeyboardButton("👥 Groups", callback_data='adm_groups')],
         [InlineKeyboardButton("📢 Broadcast", callback_data='adm_broadcast')],
+        [InlineKeyboardButton("🆔 Duplicate IDs", callback_data='adm_duplicates')],
         [InlineKeyboardButton("⚙️ Bot Settings", callback_data='adm_botsettings')],
         [InlineKeyboardButton("❌ Close", callback_data='adm_close')],
     ])
@@ -869,12 +1263,29 @@ async def admin_panel_callback(update: Update, context: CallbackContext) -> None
     elif data == 'adm_stats':
         user_count = len(context.application.bot_data.get('users', set()))
         group_count = len(context.application.bot_data.get('groups', set()))
-        await query.edit_message_text(f"📊 Users: {user_count}\nGroups: {group_count}")
+        dup_count = len(get_all_duplicate_ids())
+        db = get_mongo_db()
+        mongo_status = "✅" if db is not None else "❌"
+        await query.edit_message_text(
+            f"📊 Users: {user_count}\nGroups: {group_count}\n🆔 IDs: {len(id_registry)}\n🔁 Duplicates: {dup_count}\n🗄️ MongoDB: {mongo_status}"
+        )
     elif data == 'adm_groups':
         groups = context.application.bot_data.get('groups', set())
         await query.edit_message_text(f"👥 Groups: {len(groups)}\n/listgroups ဖြင့် details ကြည့်ပါ။")
     elif data == 'adm_broadcast':
         await query.edit_message_text("📢 /broadcast command သုံးပါ။")
+    elif data == 'adm_duplicates':
+        duplicates = get_all_duplicate_ids()
+        if not duplicates:
+            await query.edit_message_text("✅ Duplicate ID မရှိပါ။")
+        else:
+            lines = [f"🔁 <b>Duplicate IDs</b> ({len(duplicates)} ခု)\n"]
+            for i, dup in enumerate(duplicates[:10], 1):
+                poster_names = ", ".join(dup['posters'])
+                lines.append(f"{i}. <code>{dup['id']}</code> — {dup['poster_count']} posters\n   {poster_names}")
+            if len(duplicates) > 10:
+                lines.append(f"\n/idduplicates ဖြင့် အားလုံးကြည့်ပါ")
+            await query.edit_message_text("\n".join(lines), parse_mode='HTML')
     elif data == 'adm_botsettings':
         await _bot_settings_inline(query, context)
 
@@ -1577,17 +1988,52 @@ async def guide_command(update: Update, context: CallbackContext) -> None:
     guide_text = (
         "📖 *Bot အသုံးပြုနည်း လမ်းညွှန်ချက်*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "📊 */showdata*\nယနေ့ deposit data တစ်စုတစ်စည်း ထုတ်ပေးသည်\n\n"
-        "🗑️ */cleardata*\nယနေ့ data နှင့် plus counter ရှင်းလင်းသည် \\(အလုပ်မဆင်းခင် သုံးပါ\\)\n\n"
-        "‼️ *Deposit Data ဖျက်နည်း*\nBot reply ပြန်သော message ကို \\- ဖြင့် reply ပြန်ပါ\n\n"
-        "✉️ */feedback*\nAdmin ထံ မှတ်ချက် ပေးပို့သည်\n\n"
-        "📋 */form*\nDeposit report form template ထုတ်ပေးသည်\n\n"
-        "🧮 *Math Calculator*\nBot PM တွင် expression ရိုက်ပါ \\(e.g\\. 2\\+2, 15\\*15\\)\n\n"
-        "➕ *Plus Counter*\nMessage ကို \\+ reply → bot က \\+1, \\+2\\.\\.\\. ရေတွက်\n"
+
+        "📋 *Report Form ပုံစံ*\n"
+        "/form ကိုနှိပ်ပြီး template ကူးယူပါ\n"
+        "Gmail, Tele name, Username, Date, Age,\n"
+        "Current work, Phone number, ID, Khaifa\n"
+        "ဖြည့်ပြီး group ထဲ paste လုပ်ပါ\n\n"
+
+        "🆔 *ID စစ်ဆေးစနစ်*\n"
+        "Report ပို့လိုက်သည်နှင့် ID ကို အလိုအလျောက် စစ်ဆေးသည်\n"
+        "⚠️ ရောက်ပြီးသား client ဆိုပါက bot က အသိပေးမည်\n"
+        "/checkid \\<ID\\> — ID တစ်ခုကို သီးသန့်စစ်နိုင်သည်\n\n"
+
+        "📊 */showdata*\n"
+        "ယနေ့ deposit data တစ်စုတစ်စည်း ထုတ်ပေးသည်\n\n"
+
+        "🗑️ */cleardata*\n"
+        "ယနေ့ data နှင့် plus counter ရှင်းလင်းသည် \\(အလုပ်မဆင်းခင် သုံးပါ\\)\n\n"
+
+        "‼️ *Deposit Data ဖျက်နည်း*\n"
+        "Bot reply ပြန်သော message ကို \\- ဖြင့် reply ပြန်ပါ\n\n"
+
+        "✉️ */feedback*\n"
+        "Admin ထံ မှတ်ချက် ပေးပို့သည်\n\n"
+
+        "🧮 *Math Calculator*\n"
+        "Bot PM တွင် expression ရိုက်ပါ \\(e.g\\. 2\\+2, 15\\*15\\)\n\n"
+
+        "➕ *Plus Counter*\n"
+        "Message ကို \\+ reply → bot က \\+1, \\+2\\.\\.\\. ရေတွက်\n"
         "မှားရင် \\- reply → ပယ်ဖျက်ပေးသည်\n\n"
-        "📊 */total\\_plus*\nPlus counter summary ကြည့်သည်\n\n"
-        "🔄 */reset\\_plus*\nPlus counter ရှင်းလင်းသည်\n\n"
-        "🙈 */hidemenu*\nKeyboard ဖျောက်သည်\n\n"
+
+        "📊 */total\\_plus*\n"
+        "Plus counter summary ကြည့်သည်\n\n"
+
+        "🔄 */reset\\_plus*\n"
+        "Plus counter ရှင်းလင်းသည်\n\n"
+
+        "🙈 */hidemenu*\n"
+        "Keyboard ဖျောက်သည်\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "⚠️ *ID Duplicate သတိပေးပုံစံ*\n"
+        "⚠️ ဤ client သည် ရောက်ပြီးသားဖြစ်ပါသည်\\.⚠️\n"
+        "အောက်တွင်ဖော်ပြထားသည်\\.ဘယ်အဆင့်ရောက်နေလဲမေးမြန်းပါ\\.\n"
+        "Deposit \\- @example\n"
+        "Gmail \\- example\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "🤖 *Bot owner* \\- @satepryin1khouklite1"
     )
@@ -1607,6 +2053,7 @@ async def post_init(application: Application) -> None:
         BotCommand("showdata",       "ယနေ့ data ကြည့်"),
         BotCommand("cleardata",      "ယနေ့ data ဖျက်"),
         BotCommand("form",           "Report template"),
+        BotCommand("checkid",        "ID စစ်ဆေး"),
         BotCommand("total_plus",     "Plus counter ကြည့်"),
         BotCommand("reset_plus",     "Plus counter ရှင်း"),
         BotCommand("feedback",       "Admin ထံ မှတ်ချက်"),
@@ -1616,6 +2063,8 @@ async def post_init(application: Application) -> None:
         BotCommand("listusers",      "User list (Admin)"),
         BotCommand("listgroups",     "Group list (Admin)"),
         BotCommand("listschedules",  "Schedule list (Admin)"),
+        BotCommand("idduplicates",   "Duplicate IDs (Admin)"),
+        BotCommand("migrate",        "MongoDB migrate (Admin)"),
         BotCommand("admin",          "Admin panel (Admin)"),
         BotCommand("clearall",       "Data အားလုံး ရှင်း (Admin PM)"),
         BotCommand("resetplusall",   "Plus counter အားလုံး reset (Admin PM)"),
@@ -1710,6 +2159,10 @@ def main():
     application.add_handler(CommandHandler("whatsapp_total", whatsapp_total_command))
     application.add_handler(CommandHandler("total_plus", total_plus_command))
     application.add_handler(CommandHandler("reset_plus", reset_plus_command))
+    application.add_handler(CommandHandler("checkid", check_id_command))
+    application.add_handler(CommandHandler("registerid", register_id_command))
+    application.add_handler(CommandHandler("idduplicates", id_duplicates_command))
+    application.add_handler(CommandHandler("migrate", migrate_command))
 
     application.add_handler(CallbackQueryHandler(clear_group_data_callback, pattern=r'^admin_clear_-?\d+$'))
     application.add_handler(CallbackQueryHandler(cancel_group_action, pattern='^admin_cancel$'))
@@ -1779,11 +2232,9 @@ def main():
     )
     application.add_handler(schedule_handler)
 
-    # Plus counter
     application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^\+$'), handle_plus_reply))
     application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^\-$'), handle_minus_reply))
 
-    # Report form handlers
     application.add_handler(MessageHandler(
         (filters.TEXT | filters.CAPTION) & ~filters.COMMAND, handle_deposit_report
     ), group=1)
@@ -1797,12 +2248,10 @@ def main():
         filters.UpdateType.EDITED_MESSAGE & (filters.TEXT | filters.CAPTION), handle_whatsapp_report_edit
     ), group=1)
 
-    # Math calculator — PM only
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_pm_math
     ), group=2)
 
-    # Main data extraction
     application.add_handler(MessageHandler(
         (filters.TEXT & ~filters.COMMAND) | filters.CAPTION, extract_and_save_data
     ))

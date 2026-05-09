@@ -51,8 +51,9 @@ BOT_SETTINGS_SELECT   = 40
 BOT_SETTINGS_AWAITING = 41
 
 
-# PLUS COUNTER DATA - MongoDB backed
+# PLUS COUNTER DATA
 # ============================================================
+PLUS_DATA_FILE = os.path.join(os.path.dirname(__file__), 'plus_data.json')
 
 plus_counters: dict = {}
 plus_names: dict = {}
@@ -69,16 +70,44 @@ def _str_to_plus_key(s: str) -> tuple:
 
 
 def save_plus_data() -> None:
-    pass  # in-memory only
+    try:
+        data = {
+            "counters":     {_plus_key_to_str(k): v for k, v in plus_counters.items()},
+            "names":        {str(k): v for k, v in plus_names.items()},
+            "counted_msgs": {_plus_key_to_str(k): v for k, v in plus_counted_msgs.items()},
+        }
+        with open(PLUS_DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception as e:
+        logging.warning(f"save_plus_data error: {e}")
 
 
 def load_plus_data() -> None:
-    pass  # in-memory only; starts fresh each restart
+    global plus_counters, plus_names, plus_counted_msgs
+    try:
+        with open(PLUS_DATA_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        plus_counters     = {_str_to_plus_key(k): v for k, v in data.get("counters", {}).items()}
+        plus_names        = {int(k): v for k, v in data.get("names", {}).items()}
+        raw_msgs = data.get("counted_msgs", {})
+        if isinstance(raw_msgs, list):
+            plus_counted_msgs = {}
+        else:
+            plus_counted_msgs = {_str_to_plus_key(k): v for k, v in raw_msgs.items()}
+        logging.info(f"plus_data loaded: {len(plus_counters)} counters, {len(plus_counted_msgs)} counted msgs")
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logging.warning(f"load_plus_data error: {e}")
+
+
+load_plus_data()
 
 
 # ============================================================
-# DATA MSG MAP - MongoDB backed
+# DATA MSG MAP
 # ============================================================
+DATA_MSG_MAP_FILE = os.path.join(os.path.dirname(__file__), 'data_msg_map.json')
 data_msg_map: dict = {}
 
 
@@ -92,11 +121,28 @@ def _str_to_data_key(s: str) -> tuple:
 
 
 def save_data_msg_map() -> None:
-    pass  # in-memory only
+    try:
+        serializable = {_data_key_to_str(k): v for k, v in data_msg_map.items()}
+        with open(DATA_MSG_MAP_FILE, "w", encoding="utf-8") as f:
+            json.dump(serializable, f, ensure_ascii=False)
+    except Exception as e:
+        logging.warning(f"save_data_msg_map error: {e}")
 
 
 def load_data_msg_map() -> None:
-    pass  # in-memory only; starts fresh each restart
+    global data_msg_map
+    try:
+        with open(DATA_MSG_MAP_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        data_msg_map = {_str_to_data_key(k): v for k, v in raw.items()}
+        logging.info(f"data_msg_map loaded: {len(data_msg_map)} entries")
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logging.warning(f"load_data_msg_map error: {e}")
+
+
+load_data_msg_map()
 
 
 
@@ -515,40 +561,40 @@ async def extract_and_save_data(update: Update, context: CallbackContext) -> Non
     if not required_fields_present:
         return
 
-    khaifa_match = re.search(r"(?:Khaifa|Khat)\s*[-\]]?\s*(.+?)(?:\r?\n|$)", full_text, re.IGNORECASE)
+    khaifa_match = re.search(r"(?:Khaifa|Khat)\s*[-\]]?\s*(.+?)(?:\r?\n|$)", full_text, re.IGNORECASE | re.DOTALL)
     extracted_khaifa = khaifa_match.group(1).strip() if khaifa_match else "N/A"
 
-    date_match = re.search(r"Date\s*[-\]]?\s*(.+?)(?:\n|$)", full_text, re.IGNORECASE)
+    date_match = re.search(r"Date\s*[-\]]?\s*(.+?)(?:\n|$)", full_text, re.IGNORECASE | re.DOTALL)
     extracted_date = date_match.group(1).strip() if date_match else "N/A"
 
-    email_phone_match = re.search(r"(?:Gmail|Email|Phone number|Phone)\s*[-\]]?\s*(.+?)(?:\n|$)", full_text, re.IGNORECASE)
+    email_phone_match = re.search(r"(?:Gmail|Email|Phone number|Phone)\s*[-\]]?\s*(.+?)(?:\n|$)", full_text, re.IGNORECASE | re.DOTALL)
     extracted_email_phone = email_phone_match.group(1).strip() if email_phone_match else "N/A"
 
-    # Extract ID field for duplicate check
-    id_match = re.search(r'\bID\b\s*[-\]\-]?\s*(.+?)(?:\n|$)', full_text, re.IGNORECASE)
-    extracted_id = id_match.group(1).strip() if id_match else None
-
-    # Format entry: full message text + separator + khaifa name (for grouping in showdata)
-    entry = full_text.strip() + '    ' + extracted_khaifa
+    stored_entry = f"{extracted_date}    {extracted_khaifa}    {extracted_email_phone}"
 
     today_key = get_data_key()
-    context.application.bot_data.setdefault('group_data', {}).setdefault(chat_id, {}).setdefault(today_key, [])
-    context.application.bot_data['group_data'][chat_id][today_key].append(entry)
 
-    # Track message for minus-reply deletion
-    msg_key = (update.effective_chat.id, update.message.message_id)
-    data_msg_map[msg_key] = {'entry': entry, 'date_key': today_key, 'chat_id': chat_id}
-    save_data_msg_map()
+    if 'group_data' not in context.application.bot_data:
+        context.application.bot_data['group_data'] = {}
+    if chat_id not in context.application.bot_data['group_data']:
+        context.application.bot_data['group_data'][chat_id] = {}
+    if today_key not in context.application.bot_data['group_data'][chat_id]:
+        context.application.bot_data['group_data'][chat_id][today_key] = []
+
+    context.application.bot_data['group_data'][chat_id][today_key].append(stored_entry)
 
     if context.application.persistence:
         await context.application.persistence.flush()
 
-    await update.message.reply_text(
-        f'✅ Data saved.
-'
-        f'U0001f4c5 {extracted_date}  |  U0001f464 {extracted_khaifa}',
-    )
+    sent_msg = await update.message.reply_text(stored_entry)
 
+    # Track bot reply msg so (-) reply can delete this entry
+    data_msg_map[(int(chat_id), sent_msg.message_id)] = {
+        "entry": stored_entry,
+        "date_key": today_key,
+        "chat_id": chat_id,
+    }
+    save_data_msg_map()
 
 # ============================================================
 # FEEDBACK
@@ -1555,11 +1601,12 @@ async def total_plus_command(update: Update, context: CallbackContext) -> None:
 
 
 async def reset_plus_command(update: Update, context: CallbackContext) -> None:
+    """/reset_plus — ဤ chat ထဲးမှာ plus_counters ကိုသာ ရှင်လင်းသည်။"""
     current_chat = update.effective_chat.id
     keys_to_del = [k for k in plus_counters if k[0] == current_chat]
 
     if not keys_to_del:
-        await update.message.reply_text("📊 Reset စရာ Plus counter မရှိပါ။")
+        await update.message.reply_text("📊 ဤ chat တွင် ရှင်လင်းစရာ Plus counter မရှိသေးပါ။")
         return
 
     for k in keys_to_del:
@@ -1567,7 +1614,11 @@ async def reset_plus_command(update: Update, context: CallbackContext) -> None:
     for k in [k for k in plus_counted_msgs if k[0] == current_chat]:
         del plus_counted_msgs[k]
     save_plus_data()
-    await update.message.reply_text(f"✅ Plus counter reset ပြုလုပ်ပြီးပါပြီ။ ({len(keys_to_del)} ဦး)")
+
+    await update.message.reply_text(
+        f"✅ Plus counter reset ပြုလုပ်ပြီးပါ။\n"
+        f"🗑️ ဤ chat ထဲးမှာ အဖြဲ့ဝင် {len(keys_to_del)} ဤးသာ ရေတွက်မှတ်သာသာမြာရမ်လည်လည်မစကေပြန်ပါ။"
+    )
 
 
 # ============================================================

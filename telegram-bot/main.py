@@ -44,7 +44,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-MONGO_URI = os.getenv('MONGODB_URI')
+MONGO_URI = os.getenv('MONGO_URI')
 
 ADMIN_IDS = [7196380140, 1827336632, 7039073770]
 
@@ -2212,6 +2212,7 @@ def main():
     application.add_handler(CommandHandler("clearall", admin_clearall_command))
     application.add_handler(CommandHandler("resetplusall", admin_resetplusall_command))
     application.add_handler(CommandHandler("guide", guide_command))
+    application.add_handler(CallbackQueryHandler(guide_callback, pattern=r'^guide_page_\d+$'))
     application.add_handler(CommandHandler("deposit_total", deposit_total_command))
     application.add_handler(CommandHandler("whatsapp_total", whatsapp_total_command))
     application.add_handler(CommandHandler("total_plus", total_plus_command))

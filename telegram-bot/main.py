@@ -524,11 +524,31 @@ async def extract_and_save_data(update: Update, context: CallbackContext) -> Non
     email_phone_match = re.search(r"(?:Gmail|Email|Phone number|Phone)\s*[-\]]?\s*(.+?)(?:\n|$)", full_text, re.IGNORECASE)
     extracted_email_phone = email_phone_match.group(1).strip() if email_phone_match else "N/A"
 
-    # Extract ID field for registry check
+    # Extract ID field for duplicate check
+    id_match = re.search(r'\bID\b\s*[-\]\-]?\s*(.+?)(?:\n|$)', full_text, re.IGNORECASE)
+    extracted_id = id_match.group(1).strip() if id_match else None
 
-# ============================================================
-# ID REGISTRY COMMANDS
-# ============================================================
+    # Format entry: full message text + separator + khaifa name (for grouping in showdata)
+    entry = full_text.strip() + '    ' + extracted_khaifa
+
+    today_key = get_data_key()
+    context.application.bot_data.setdefault('group_data', {}).setdefault(chat_id, {}).setdefault(today_key, [])
+    context.application.bot_data['group_data'][chat_id][today_key].append(entry)
+
+    # Track message for minus-reply deletion
+    msg_key = (update.effective_chat.id, update.message.message_id)
+    data_msg_map[msg_key] = {'entry': entry, 'date_key': today_key, 'chat_id': chat_id}
+    save_data_msg_map()
+
+    if context.application.persistence:
+        await context.application.persistence.flush()
+
+    await update.message.reply_text(
+        f'✅ Data saved.
+'
+        f'U0001f4c5 {extracted_date}  |  U0001f464 {extracted_khaifa}',
+    )
+
 
 # ============================================================
 # FEEDBACK

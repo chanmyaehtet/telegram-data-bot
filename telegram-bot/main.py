@@ -1949,107 +1949,107 @@ async def reset_plus_command(update: Update, context: CallbackContext) -> None:
 # ============================================================
 
 # ============================================================
-  # GUIDE PAGES - Multi-page inline navigation
-  # ============================================================
+# GUIDE PAGES - Multi-page inline navigation
+# ============================================================
 
-  GUIDE_PAGES = [
-      {
-          "title": "📖 Bot လမ်းညွှန် (1/6) — Report Form",
-          "text": (
-              "<b>📋 Report Form ပုံစံ</b>\n"
-              "━━━━━━━━━━━━━━━━━━━━\n\n"
-              "/form ကိုနှိပ်၍ template ကူးယူပါ။\n\n"
-              "<b>ဖြည့်ရမည့် field များ:</b>\n"
-              "• Gmail\n"
-              "• Tele name\n"
-              "• Username\n"
-              "• Date\n"
-              "• Age\n"
-              "• Current work\n"
-              "• Phone number\n"
-              "• ID\n"
-              "• Khaifa\n\n"
-              "ဖြည့်ပြီးပါက group ထဲ paste လုပ်ပါ။"
-          ),
-      },
-      {
-          "title": "📖 Bot လမ်းညွှန် (2/6) — ID စစ်ဆေးစနစ်",
-          "text": (
-              "<b>🆔 ID စစ်ဆေးစနစ်</b>\n"
-              "━━━━━━━━━━━━━━━━━━━━\n\n"
-              "Report ပို့သည်နှင့် ID ကို <b>အလိုအလျောက်</b> စစ်ဆေးသည်။\n\n"
-              "⚠️ ရောက်ပြီးသား client ဆိုပါက bot က ချက်ချင်း အသိပေးမည်:\n\n"
-              "<i>⚠️ ဤ client သည် ရောက်ပြီးသားဖြစ်ပါသည်။\n"
-              "ဘယ်အဆင့်ရောက်နေလဲမေးမြန်းပါ။</i>\n\n"
-              "<b>သီးသန့်စစ်ဆေးနည်း:</b>\n"
-              "<code>/checkid &lt;ID&gt;</code>\n"
-              "ဥပမာ: <code>/checkid 1234567890</code>\n\n"
-              "ကျွမ်းကျင်သူများ admin panel မှ ID record ကြည့်နိုင်သည်။"
-          ),
-      },
-      {
-          "title": "📖 Bot လမ်းညွှန် (3/6) — Data စီမံခန့်ခွဲမှု",
-          "text": (
-              "<b>📊 Data စီမံခန့်ခွဲမှု</b>\n"
-              "━━━━━━━━━━━━━━━━━━━━\n\n"
-              "<b>/showdata</b>\n"
-              "ယနေ့ deposit data တစ်စုတစ်စည်းထုတ်ပေးသည်။\n\n"
-              "<b>/cleardata</b>\n"
-              "ယနေ့ data နှင့် plus counter ရှင်းလင်းသည်။\n"
-              "⚠️ နေ့တိုင်း အလုပ်မဆင်းမီ သုံးပါ။\n\n"
-              "<b>‼️ Data တစ်ခုတည်း ဖျက်နည်း:</b>\n"
-              "Bot reply ပြန်သော message ကို\n"
-              "<code>-</code> ဖြင့် reply ပြန်ပါ → ဆောင်ရွက်ပေးမည်။\n\n"
-              "<b>/deposit_total</b> — Deposit report ကြည့်\n"
-              "<b>/whatsapp_total</b> — WhatsApp report ကြည့်"
-          ),
-      },
-      {
-          "title": "📖 Bot လမ်းညွှန် (4/6) — Plus Counter",
-          "text": (
-              "<b>➕ Plus Counter စနစ်</b>\n"
-              "━━━━━━━━━━━━━━━━━━━━\n\n"
-              "Message ကို <code>+</code> ဖြင့် reply ပြန်ပါ\n"
-              "→ bot က <b>+1, +2, +3...</b> ရေတွက်ပေးမည်။\n\n"
-              "မှားမိပါက <code>-</code> ဖြင့် reply → ပယ်ဖျက်ပေးမည်။\n\n"
-              "<b>/total_plus</b> — Plus counter summary ကြည့်\n"
-              "<b>/reset_plus</b> — Plus counter ရှင်းလင်း\n\n"
-              "<b>🧮 Math Calculator</b>\n"
-              "Bot PM ထဲတွင် expression ရိုက်ရုံဖြင့် တွက်ပေးသည်:\n"
-              "ဥပမာ: <code>2+2</code>, <code>15*15</code>, <code>100/4</code>"
-          ),
-      },
-      {
-          "title": "📖 Bot လမ်းညွှန် (5/6) — ✉️ Feedback & Menu",
-          "text": (
-              "<b>✉️ Feedback ပေးပို့နည်း</b>\n"
-              "━━━━━━━━━━━━━━━━━━━━\n\n"
-              "/feedback ကိုနှိပ်ပြီး\n"
-              "Admin ထံ မှတ်ချက်/အကြံပြုချက် ပေးပို့နိုင်သည်။\n\n"
-              "<b>📱 Menu စီမံခန့်ခွဲမှု</b>\n"
-              "<b>/menu</b> — Main menu ဖွင့်\n"
-              "<b>/start</b> — Bot စတင် / menu ပြ\n"
-              "<b>/hidemenu</b> — Keyboard ဖျောက်\n\n"
-              "<b>🔎 Command အားလုံး:</b>\n"
-              "<b>/help</b> ကိုနှိပ်ပြီး command list အပြည့်ကြည့်နိုင်သည်။"
-          ),
-      },
-      {
-          "title": "📖 Bot လမ်းညွှန် (6/6) — ⚠️ Duplicate ID သတိပေးပုံ",
-          "text": (
-              "<b>⚠️ ID Duplicate သတိပေးပုံစံ</b>\n"
-              "━━━━━━━━━━━━━━━━━━━━\n\n"
-              "Duplicate စစ်ဆေးတွေ့ပါက bot က ဤပုံစံဖြင့် သတိပေးမည်:\n\n"
-              "<i>⚠️ ဤ client သည် ရောက်ပြီးသားဖြစ်ပါသည်။⚠️\n"
-              "အောက်တွင်ဖော်ပြထားသည်။ဘယ်အဆင့်ရောက်နေလဲမေးမြန်းပါ။\n"
-              "Deposit - @example\n"
-              "Gmail - example</i>\n\n"
-              "Data အားလုံးကို <b>MongoDB</b> ထဲ ဘေးကင်းစွာ သိမ်းဆည်းထားသည်။\n\n"
-              "━━━━━━━━━━━━━━━━━━━━\n"
-              "🤖 <b>Bot owner</b> — @satepryin1khouklite1"
-          ),
-      },
-  ]
+GUIDE_PAGES = [
+    {
+        "title": "📖 Bot လမ်းညွှန် (1/6) — Report Form",
+        "text": (
+            "<b>📋 Report Form ပုံစံ</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "/form ကိုနှိပ်၍ template ကူးယူပါ။\n\n"
+            "<b>ဖြည့်ရမည့် field များ:</b>\n"
+            "• Gmail\n"
+            "• Tele name\n"
+            "• Username\n"
+            "• Date\n"
+            "• Age\n"
+            "• Current work\n"
+            "• Phone number\n"
+            "• ID\n"
+            "• Khaifa\n\n"
+            "ဖြည့်ပြီးပါက group ထဲ paste လုပ်ပါ။"
+        ),
+    },
+    {
+        "title": "📖 Bot လမ်းညွှန် (2/6) — ID စစ်ဆေးစနစ်",
+        "text": (
+            "<b>🆔 ID စစ်ဆေးစနစ်</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Report ပို့သည်နှင့် ID ကို <b>အလိုအလျောက်</b> စစ်ဆေးသည်။\n\n"
+            "⚠️ ရောက်ပြီးသား client ဆိုပါက bot က ချက်ချင်း အသိပေးမည်:\n\n"
+            "<i>⚠️ ဤ client သည် ရောက်ပြီးသားဖြစ်ပါသည်။\n"
+            "ဘယ်အဆင့်ရောက်နေလဲမေးမြန်းပါ။</i>\n\n"
+            "<b>သီးသန့်စစ်ဆေးနည်း:</b>\n"
+            "<code>/checkid &lt;ID&gt;</code>\n"
+            "ဥပမာ: <code>/checkid 1234567890</code>\n\n"
+            "ကျွမ်းကျင်သူများ admin panel မှ ID record ကြည့်နိုင်သည်။"
+        ),
+    },
+    {
+        "title": "📖 Bot လမ်းညွှန် (3/6) — Data စီမံခန့်ခွဲမှု",
+        "text": (
+            "<b>📊 Data စီမံခန့်ခွဲမှု</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "<b>/showdata</b>\n"
+            "ယနေ့ deposit data တစ်စုတစ်စည်းထုတ်ပေးသည်။\n\n"
+            "<b>/cleardata</b>\n"
+            "ယနေ့ data နှင့် plus counter ရှင်းလင်းသည်။\n"
+            "⚠️ နေ့တိုင်း အလုပ်မဆင်းမီ သုံးပါ။\n\n"
+            "<b>‼️ Data တစ်ခုတည်း ဖျက်နည်း:</b>\n"
+            "Bot reply ပြန်သော message ကို\n"
+            "<code>-</code> ဖြင့် reply ပြန်ပါ → ဆောင်ရွက်ပေးမည်။\n\n"
+            "<b>/deposit_total</b> — Deposit report ကြည့်\n"
+            "<b>/whatsapp_total</b> — WhatsApp report ကြည့်"
+        ),
+    },
+    {
+        "title": "📖 Bot လမ်းညွှန် (4/6) — Plus Counter",
+        "text": (
+            "<b>➕ Plus Counter စနစ်</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Message ကို <code>+</code> ဖြင့် reply ပြန်ပါ\n"
+            "→ bot က <b>+1, +2, +3...</b> ရေတွက်ပေးမည်။\n\n"
+            "မှားမိပါက <code>-</code> ဖြင့် reply → ပယ်ဖျက်ပေးမည်။\n\n"
+            "<b>/total_plus</b> — Plus counter summary ကြည့်\n"
+            "<b>/reset_plus</b> — Plus counter ရှင်းလင်း\n\n"
+            "<b>🧮 Math Calculator</b>\n"
+            "Bot PM ထဲတွင် expression ရိုက်ရုံဖြင့် တွက်ပေးသည်:\n"
+            "ဥပမာ: <code>2+2</code>, <code>15*15</code>, <code>100/4</code>"
+        ),
+    },
+    {
+        "title": "📖 Bot လမ်းညွှန် (5/6) — ✉️ Feedback & Menu",
+        "text": (
+            "<b>✉️ Feedback ပေးပို့နည်း</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "/feedback ကိုနှိပ်ပြီး\n"
+            "Admin ထံ မှတ်ချက်/အကြံပြုချက် ပေးပို့နိုင်သည်။\n\n"
+            "<b>📱 Menu စီမံခန့်ခွဲမှု</b>\n"
+            "<b>/menu</b> — Main menu ဖွင့်\n"
+            "<b>/start</b> — Bot စတင် / menu ပြ\n"
+            "<b>/hidemenu</b> — Keyboard ဖျောက်\n\n"
+            "<b>🔎 Command အားလုံး:</b>\n"
+            "<b>/help</b> ကိုနှိပ်ပြီး command list အပြည့်ကြည့်နိုင်သည်။"
+        ),
+    },
+    {
+        "title": "📖 Bot လမ်းညွှန် (6/6) — ⚠️ Duplicate ID သတိပေးပုံ",
+        "text": (
+            "<b>⚠️ ID Duplicate သတိပေးပုံစံ</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Duplicate စစ်ဆေးတွေ့ပါက bot က ဤပုံစံဖြင့် သတိပေးမည်:\n\n"
+            "<i>⚠️ ဤ client သည် ရောက်ပြီးသားဖြစ်ပါသည်။⚠️\n"
+            "အောက်တွင်ဖော်ပြထားသည်။ဘယ်အဆင့်ရောက်နေလဲမေးမြန်းပါ။\n"
+            "Deposit - @example\n"
+            "Gmail - example</i>\n\n"
+            "Data အားလုံးကို <b>MongoDB</b> ထဲ ဘေးကင်းစွာ သိမ်းဆည်းထားသည်။\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🤖 <b>Bot owner</b> — @satepryin1khouklite1"
+        ),
+    },
+]
 
 
 def _guide_keyboard(page: int) -> InlineKeyboardMarkup:

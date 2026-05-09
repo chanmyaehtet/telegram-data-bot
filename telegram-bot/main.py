@@ -2129,7 +2129,17 @@ def main():
         logging.error("TELEGRAM_BOT_TOKEN is not set!")
         return
 
-    persistence = PicklePersistence(filepath=os.path.join(os.path.dirname(__file__), 'bot_data.pickle'))
+    if MONGO_AVAILABLE and MONGO_URI:
+        try:
+            from mongo_persistence import MongoPersistence
+            persistence = MongoPersistence(mongo_uri=MONGO_URI, db_name='telegram_bot_db')
+            logging.info("Using MongoPersistence (MongoDB) for bot data.")
+        except Exception as e:
+            logging.warning(f"MongoPersistence load failed, falling back to PicklePersistence: {e}")
+            persistence = PicklePersistence(filepath=os.path.join(os.path.dirname(__file__), 'bot_data.pickle'))
+    else:
+        logging.info("MONGO_URI not set or pymongo unavailable. Using PicklePersistence.")
+        persistence = PicklePersistence(filepath=os.path.join(os.path.dirname(__file__), 'bot_data.pickle'))
 
     application = (
         Application.builder()

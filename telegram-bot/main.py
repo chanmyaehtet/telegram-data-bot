@@ -315,10 +315,12 @@ async def help_command(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(
         'Bot commands:\n\n'
         ' /form - Report template\n'
-        ' /chk <number> - Check number usage\n'
         ' /showdata - Show today\'s data\n'
         ' /cleardata - Clear today\'s data\n'
+        ' /total_plus - Plus counter\n'
+        ' /reset_plus - Reset plus counter\n'
         ' /feedback - Send feedback to admin\n'
+        ' /guide - Usage guide\n'
         ' /hidemenu - Hide menu\n\n'
         '🧮 Math: Bot PM တွင် expression ရိုက်ပါ (e.g. 2+2)'
     )
@@ -338,10 +340,9 @@ async def main_menu_command(update: Update, context: CallbackContext) -> None:
 
     keyboard = [
         [KeyboardButton("/showdata"), KeyboardButton("/cleardata")],
-        [KeyboardButton("/feedback"), KeyboardButton("/chk")],
-        [KeyboardButton("/form"), KeyboardButton("/total_plus")],
-        [KeyboardButton("/reset_plus"), KeyboardButton("/guide")],
-        [KeyboardButton("/hidemenu")]
+        [KeyboardButton("/feedback"), KeyboardButton("/form")],
+        [KeyboardButton("/total_plus"), KeyboardButton("/reset_plus")],
+        [KeyboardButton("/guide"), KeyboardButton("/hidemenu")],
     ]
 
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -362,45 +363,6 @@ async def remove_menu(update: Update, context: CallbackContext) -> None:
         reply_markup=ReplyKeyboardRemove()
     )
 
-
-async def check_command(update: Update, context: CallbackContext) -> None:
-    if not context.args:
-        await update.message.reply_text("Usage: /chk <number>")
-        return
-
-    check_number = " ".join(context.args).strip()
-    user = update.effective_user
-    checker_label = f"@{user.username}" if (user and user.username) else (user.full_name if user else "Unknown")
-
-    records = context.application.bot_data.setdefault('check_records', {})
-    existing = records.get(check_number, [])
-    if isinstance(existing, int):
-        existing = []
-
-    existing.append(checker_label)
-    records[check_number] = existing
-    new_count = len(existing)
-
-    if new_count >= 2:
-        counts: dict = {}
-        for name in existing:
-            counts[name] = counts.get(name, 0) + 1
-        checker_list = "\n".join(f"{name} → {cnt}" for name, cnt in counts.items())
-        await update.message.reply_text(
-            f"🔍 <b>{check_number}</b>\n\n"
-            f"<blockquote>ဤနံပါတ်သည် အကြိမ်ရေ <b>{new_count}</b> စစ်ဆေးထားပါသည်။\n\n"
-            f"စစ်ဆေးထားသူများ\n{checker_list}</blockquote>",
-            parse_mode='HTML'
-        )
-    else:
-        await update.message.reply_text(
-            f"🔍 <b>{check_number}</b>\n\n"
-            f"<blockquote>ပထမဦးဆုံး စစ်ဆေးခြင်းဖြစ်သည်။</blockquote>",
-            parse_mode='HTML'
-        )
-
-    if context.application.persistence:
-        await context.application.persistence.flush()
 
 
 async def clear_data(update: Update, context: CallbackContext) -> None:
@@ -782,6 +744,28 @@ async def broadcast_cancel(update: Update, context: CallbackContext) -> int:
 # ADMIN PANEL
 # ============================================================
 
+async def list_users(update: Update, context: CallbackContext) -> None:
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    users = context.application.bot_data.get('users', set())
+    if not users:
+        await update.message.reply_text("👤 PM user မရှိသေးပါ။")
+        return
+
+    lines = [f"👤 <b>PM Users</b> ({len(users)} ဦး)\n"]
+    for uid in sorted(list(users)):
+        try:
+            chat = await context.application.bot.get_chat(chat_id=uid)
+            name = chat.full_name or f"User {uid}"
+            username = f" (@{chat.username})" if chat.username else ""
+            lines.append(f"• {name}{username} — <code>{uid}</code>")
+        except Exception:
+            lines.append(f"• User <code>{uid}</code>")
+
+    await update.message.reply_text("\n".join(lines), parse_mode='HTML')
+
+
 async def list_groups(update: Update, context: CallbackContext) -> None:
     if update.effective_user.id not in ADMIN_IDS:
         return
@@ -848,13 +832,11 @@ async def stats(update: Update, context: CallbackContext) -> None:
 
     user_count = len(context.application.bot_data.get('users', set()))
     group_count = len(context.application.bot_data.get('groups', set()))
-    chk_count = len(context.application.bot_data.get('check_records', {}))
 
     await update.message.reply_text(
         f"📊 <b>Bot Statistics</b>\n\n"
         f"👤 Users (PM): {user_count}\n"
-        f"👥 Groups: {group_count}\n"
-        f"🔍 Checked numbers (/chk): {chk_count}",
+        f"👥 Groups: {group_count}",
         parse_mode='HTML'
     )
 
@@ -1605,7 +1587,6 @@ async def guide_command(update: Update, context: CallbackContext) -> None:
         "မှားရင် \\- reply → ပယ်ဖျက်ပေးသည်\n\n"
         "📊 */total\\_plus*\nPlus counter summary ကြည့်သည်\n\n"
         "🔄 */reset\\_plus*\nPlus counter ရှင်းလင်းသည်\n\n"
-        "🔍 */chk \\<နံပါတ်\\>*\nနံပါတ် စစ်ဆေးသည်\n\n"
         "🙈 */hidemenu*\nKeyboard ဖျောက်သည်\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "🤖 *Bot owner* \\- @satepryin1khouklite1"
@@ -1625,7 +1606,6 @@ async def post_init(application: Application) -> None:
         BotCommand("guide",          "Bot လမ်းညွှန်"),
         BotCommand("showdata",       "ယနေ့ data ကြည့်"),
         BotCommand("cleardata",      "ယနေ့ data ဖျက်"),
-        BotCommand("chk",            "နံပါတ် စစ်"),
         BotCommand("form",           "Report template"),
         BotCommand("total_plus",     "Plus counter ကြည့်"),
         BotCommand("reset_plus",     "Plus counter ရှင်း"),
@@ -1633,6 +1613,7 @@ async def post_init(application: Application) -> None:
         BotCommand("hidemenu",       "Keyboard ဖျောက်"),
         BotCommand("help",           "Help"),
         BotCommand("stats",          "Bot stats (Admin)"),
+        BotCommand("listusers",      "User list (Admin)"),
         BotCommand("listgroups",     "Group list (Admin)"),
         BotCommand("listschedules",  "Schedule list (Admin)"),
         BotCommand("admin",          "Admin panel (Admin)"),
@@ -1715,9 +1696,9 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("showdata", show_data))
     application.add_handler(CommandHandler("cleardata", clear_data))
-    application.add_handler(CommandHandler("chk", check_command))
     application.add_handler(CommandHandler("form", report_form_command))
     application.add_handler(CommandHandler("stats", stats))
+    application.add_handler(CommandHandler("listusers", list_users))
     application.add_handler(CommandHandler("listgroups", list_groups))
     application.add_handler(CommandHandler("listschedules", listschedules_command))
     application.add_handler(CommandHandler("removeschedule", removeschedule_command))

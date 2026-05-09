@@ -1,5 +1,5 @@
 """
-MongoDB-backed persistence for python-telegram-bot.
+MongoDB-backed persistence for python-telegram-bot v20+.
 Replaces PicklePersistence so bot data survives Render restarts.
 """
 import logging
@@ -8,7 +8,6 @@ from typing import Any, Dict, Optional, Tuple
 from collections import defaultdict
 
 from telegram.ext import BasePersistence
-from telegram.ext._utils.types import BD, CD, UD, CDCData, ConversationKey
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +16,7 @@ class MongoPersistence(BasePersistence):
     """
     Persistence that stores all data in MongoDB.
     Falls back to in-memory if MongoDB is unavailable.
+    Compatible with python-telegram-bot v20, v21, v22+
     """
 
     def __init__(self, mongo_uri: str, db_name: str = "telegram_bot_db"):
@@ -28,7 +28,7 @@ class MongoPersistence(BasePersistence):
         self._chat_data: dict = defaultdict(dict)
         self._user_data: dict = defaultdict(dict)
         self._conversations: dict = {}
-        self._callback_data: Optional[Tuple] = None
+        self._callback_data: Optional[Any] = None
         self._loaded = False
 
     def _get_db(self):
@@ -65,7 +65,6 @@ class MongoPersistence(BasePersistence):
             doc = col.find_one({'_key': 'bot_data'})
             if doc:
                 self._bot_data = {k: v for k, v in doc.items() if not k.startswith('_')}
-                # Restore sets (stored as lists in MongoDB)
                 for key in ['users', 'groups']:
                     if key in self._bot_data and isinstance(self._bot_data[key], list):
                         self._bot_data[key] = set(self._bot_data[key])
@@ -101,8 +100,7 @@ class MongoPersistence(BasePersistence):
         except Exception as e:
             logger.warning(f"MongoPersistence: load conversations error: {e}")
 
-    def _safe_copy(self, data):
-        """Make a deep copy, converting sets to lists for MongoDB safety."""
+    def _safe_copy(self, data: Any) -> Any:
         try:
             return copy.deepcopy(data)
         except Exception:
@@ -120,90 +118,60 @@ class MongoPersistence(BasePersistence):
                 result[k] = v
         return result
 
+    def _save_to_mongo(self, key: str, data: dict):
+        col = self._col('persistence')
+        if col is None:
+            return
+        try:
+            prepared = self._prepare_for_mongo(self._safe_copy(data))
+            prepared['_key'] = key
+            col.update_one({'_key': key}, {'$set': prepared}, upsert=True)
+        except Exception as e:
+            logger.warning(f"MongoPersistence: save '{key}' error: {e}")
+
     # ---- BasePersistence abstract methods ----
 
-    async def get_bot_data(self) -> BD:
+    async def get_bot_data(self) -> dict:
         self._load_all()
         return self._safe_copy(self._bot_data)
 
-    async def update_bot_data(self, data: BD) -> None:
+    async def update_bot_data(self, data: dict) -> None:
         self._bot_data = self._safe_copy(data)
-        col = self._col('persistence')
-        if col is None:
-            return
-        try:
-            prepared = self._prepare_for_mongo(self._bot_data)
-            prepared['_key'] = 'bot_data'
-            col.update_one({'_key': 'bot_data'}, {'$set': prepared}, upsert=True)
-        except Exception as e:
-            logger.warning(f"MongoPersistence: update_bot_data error: {e}")
+        self._save_to_mongo('bot_data', self._bot_data)
 
-    async def get_chat_data(self) -> CD:
+    async def get_chat_data(self) -> dict:
         self._load_all()
         return defaultdict(dict, self._safe_copy(dict(self._chat_data)))
 
-    async def update_chat_data(self, chat_id: int, data: CD) -> None:
+    async def update_chat_data(self, chat_id: int, data: dict) -> None:
         self._chat_data[str(chat_id)] = self._safe_copy(data)
-        col = self._col('persistence')
-        if col is None:
-            return
-        try:
-            prepared = self._prepare_for_mongo(dict(self._chat_data))
-            prepared['_key'] = 'chat_data'
-            col.update_one({'_key': 'chat_data'}, {'$set': prepared}, upsert=True)
-        except Exception as e:
-            logger.warning(f"MongoPersistence: update_chat_data error: {e}")
+        self._save_to_mongo('chat_data', dict(self._chat_data))
 
     async def drop_chat_data(self, chat_id: int) -> None:
         self._chat_data.pop(str(chat_id), None)
-        col = self._col('persistence')
-        if col is None:
-            return
-        try:
-            prepared = self._prepare_for_mongo(dict(self._chat_data))
-            prepared['_key'] = 'chat_data'
-            col.update_one({'_key': 'chat_data'}, {'$set': prepared}, upsert=True)
-        except Exception as e:
-            logger.warning(f"MongoPersistence: drop_chat_data error: {e}")
+        self._save_to_mongo('chat_data', dict(self._chat_data))
 
-    async def get_user_data(self) -> UD:
+    async def get_user_data(self) -> dict:
         self._load_all()
         return defaultdict(dict, self._safe_copy(dict(self._user_data)))
 
-    async def update_user_data(self, user_id: int, data: UD) -> None:
+    async def update_user_data(self, user_id: int, data: dict) -> None:
         self._user_data[str(user_id)] = self._safe_copy(data)
-        col = self._col('persistence')
-        if col is None:
-            return
-        try:
-            prepared = self._prepare_for_mongo(dict(self._user_data))
-            prepared['_key'] = 'user_data'
-            col.update_one({'_key': 'user_data'}, {'$set': prepared}, upsert=True)
-        except Exception as e:
-            logger.warning(f"MongoPersistence: update_user_data error: {e}")
+        self._save_to_mongo('user_data', dict(self._user_data))
 
     async def drop_user_data(self, user_id: int) -> None:
         self._user_data.pop(str(user_id), None)
-        col = self._col('persistence')
-        if col is None:
-            return
-        try:
-            prepared = self._prepare_for_mongo(dict(self._user_data))
-            prepared['_key'] = 'user_data'
-            col.update_one({'_key': 'user_data'}, {'$set': prepared}, upsert=True)
-        except Exception as e:
-            logger.warning(f"MongoPersistence: drop_user_data error: {e}")
+        self._save_to_mongo('user_data', dict(self._user_data))
 
-    async def get_callback_data(self) -> Optional[CDCData]:
+    async def get_callback_data(self) -> Optional[Any]:
         return self._callback_data
 
-    async def update_callback_data(self, data: CDCData) -> None:
+    async def update_callback_data(self, data: Any) -> None:
         self._callback_data = data
 
-    async def get_conversations(self, name: str) -> Dict[ConversationKey, Any]:
+    async def get_conversations(self, name: str) -> dict:
         self._load_all()
         raw = self._conversations.get(name, {})
-        # Convert list keys back to tuples
         result = {}
         for k, v in raw.items():
             if isinstance(k, str) and ',' in k:
@@ -217,10 +185,12 @@ class MongoPersistence(BasePersistence):
                 result[k] = v
         return result
 
-    async def update_conversation(self, name: str, key: ConversationKey, new_state: Optional[Any]) -> None:
+    async def update_conversation(self, name: str, key: Any, new_state: Optional[Any]) -> None:
         if name not in self._conversations:
             self._conversations[name] = {}
+
         str_key = ','.join(str(k) for k in key) if isinstance(key, tuple) else str(key)
+
         if new_state is None:
             self._conversations[name].pop(str_key, None)
         else:
@@ -242,22 +212,18 @@ class MongoPersistence(BasePersistence):
         if col is None:
             return
         try:
-            # Save bot_data
             prepared_bot = self._prepare_for_mongo(self._safe_copy(self._bot_data))
             prepared_bot['_key'] = 'bot_data'
             col.update_one({'_key': 'bot_data'}, {'$set': prepared_bot}, upsert=True)
 
-            # Save chat_data
             prepared_chat = self._prepare_for_mongo(dict(self._chat_data))
             prepared_chat['_key'] = 'chat_data'
             col.update_one({'_key': 'chat_data'}, {'$set': prepared_chat}, upsert=True)
 
-            # Save user_data
             prepared_user = self._prepare_for_mongo(dict(self._user_data))
             prepared_user['_key'] = 'user_data'
             col.update_one({'_key': 'user_data'}, {'$set': prepared_user}, upsert=True)
 
-            # Save conversations
             conv_prepared = {k: v for k, v in self._conversations.items()}
             conv_prepared['_key'] = 'conversations'
             col.update_one({'_key': 'conversations'}, {'$set': conv_prepared}, upsert=True)

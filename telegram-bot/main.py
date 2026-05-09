@@ -44,7 +44,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-MONGO_URI = os.getenv('MONGO_URI', 'mongodb+srv://zhengduo1539_db_user:jbDcpW77Sbbh3KXI@cluster0.l26dlgi.mongodb.net/?appName=Cluster0')
+MONGO_URI = os.getenv('MONGODB_URI')
 
 ADMIN_IDS = [7196380140, 1827336632, 7039073770]
 
@@ -98,60 +98,37 @@ def mongo_col(name: str):
 # ID REGISTRY - MongoDB backed
 # ============================================================
 
-ID_REGISTRY_FILE = os.path.join(os.path.dirname(__file__), "id_registry.json")
-
 id_registry: dict = {}
 
 
 def load_id_registry() -> None:
-    global id_registry
-
-    col = mongo_col('id_registry')
-    if col is not None:
-        try:
-            docs = list(col.find({}, {'_id': 0}))
-            id_registry = {doc['id']: doc for doc in docs}
-            logging.info(f"id_registry loaded from MongoDB: {len(id_registry)} entries")
-            return
-        except Exception as e:
-            logging.warning(f"MongoDB id_registry load failed, using file: {e}")
-
-    for path in [ID_REGISTRY_FILE, ID_REGISTRY_FILE + ".tmp"]:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            id_registry = data
-            logging.info(f"id_registry loaded from file: {len(id_registry)} entries")
-            return
-        except FileNotFoundError:
-            continue
-        except Exception as e:
-            logging.warning(f"load_id_registry error ({path}): {e}")
-
+      global id_registry
+      col = mongo_col('id_registry')
+      if col is None:
+          logging.warning("MongoDB not available — id_registry will be empty.")
+          return
+      try:
+          docs = list(col.find({}, {'_id': 0}))
+          id_registry = {doc['id']: doc for doc in docs}
+          logging.info(f"id_registry loaded from MongoDB: {len(id_registry)} entries")
+      except Exception as e:
+          logging.error(f"load_id_registry MongoDB error: {e}")
 
 def save_id_registry() -> None:
-    col = mongo_col('id_registry')
-    if col is not None:
-        try:
-            ops = []
-            for key, val in id_registry.items():
-                doc = dict(val)
-                doc['id'] = key
-                ops.append(UpdateOne({'id': key}, {'$set': doc}, upsert=True))
-            if ops:
-                col.bulk_write(ops)
-            return
-        except Exception as e:
-            logging.warning(f"MongoDB id_registry save failed, using file: {e}")
-
-    tmp_path = ID_REGISTRY_FILE + ".tmp"
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(id_registry, f, ensure_ascii=False)
-        os.replace(tmp_path, ID_REGISTRY_FILE)
-    except Exception as e:
-        logging.warning(f"save_id_registry file error: {e}")
-
+      col = mongo_col('id_registry')
+      if col is None:
+          logging.warning("MongoDB not available — id_registry not saved.")
+          return
+      try:
+          ops = []
+          for key, val in id_registry.items():
+              doc = dict(val)
+              doc['id'] = key
+              ops.append(UpdateOne({'id': key}, {'$set': doc}, upsert=True))
+          if ops:
+              col.bulk_write(ops)
+      except Exception as e:
+          logging.error(f"save_id_registry MongoDB error: {e}")
 
 def register_id(user_id: str, poster: str, value: str = "") -> dict:
     """Register a new ID or add a poster to existing ID. Returns {'is_new': bool, 'duplicate_posters': list}"""
@@ -246,7 +223,6 @@ load_id_registry()
 # ============================================================
 # PLUS COUNTER DATA - MongoDB backed
 # ============================================================
-PLUS_DATA_FILE = os.path.join(os.path.dirname(__file__), "plus_data.json")
 
 plus_counters: dict = {}
 plus_names: dict = {}
@@ -263,137 +239,88 @@ def _str_to_plus_key(s: str) -> tuple:
 
 
 def save_plus_data() -> None:
-    col = mongo_col('plus_data')
-    if col is not None:
-        try:
-            data = {
-                "counters":     {_plus_key_to_str(k): v for k, v in plus_counters.items()},
-                "names":        {str(k): v for k, v in plus_names.items()},
-                "counted_msgs": {_plus_key_to_str(k): v for k, v in plus_counted_msgs.items()},
-            }
-            col.update_one({'_type': 'plus_data'}, {'$set': {'_type': 'plus_data', **data}}, upsert=True)
-            return
-        except Exception as e:
-            logging.warning(f"MongoDB save_plus_data failed, using file: {e}")
-
-    tmp_path = PLUS_DATA_FILE + ".tmp"
-    try:
-        data = {
-            "counters":     {_plus_key_to_str(k): v for k, v in plus_counters.items()},
-            "names":        {str(k): v for k, v in plus_names.items()},
-            "counted_msgs": {_plus_key_to_str(k): v for k, v in plus_counted_msgs.items()},
-        }
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-        os.replace(tmp_path, PLUS_DATA_FILE)
-    except Exception as e:
-        logging.warning(f"save_plus_data error: {e}")
+      col = mongo_col('plus_data')
+      if col is None:
+          logging.warning("MongoDB not available — plus_data not saved.")
+          return
+      try:
+          data = {
+              "counters":     {_plus_key_to_str(k): v for k, v in plus_counters.items()},
+              "names":        {str(k): v for k, v in plus_names.items()},
+              "counted_msgs": {_plus_key_to_str(k): v for k, v in plus_counted_msgs.items()},
+          }
+          col.update_one({'_type': 'plus_data'}, {'$set': {'_type': 'plus_data', **data}}, upsert=True)
+      except Exception as e:
+          logging.error(f"save_plus_data MongoDB error: {e}")
 
 
-def load_plus_data() -> None:
-    global plus_counters, plus_names, plus_counted_msgs
-
-    col = mongo_col('plus_data')
-    if col is not None:
-        try:
-            doc = col.find_one({'_type': 'plus_data'})
-            if doc:
-                plus_counters = {_str_to_plus_key(k): v for k, v in doc.get("counters", {}).items()}
-                plus_names = {int(k): v for k, v in doc.get("names", {}).items()}
-                raw_msgs = doc.get("counted_msgs", {})
-                plus_counted_msgs = {} if isinstance(raw_msgs, list) else {_str_to_plus_key(k): v for k, v in raw_msgs.items()}
-                logging.info(f"plus_data loaded from MongoDB: {len(plus_counters)} counters")
-                return
-        except Exception as e:
-            logging.warning(f"MongoDB load_plus_data failed, using file: {e}")
-
-    for path in [PLUS_DATA_FILE, PLUS_DATA_FILE + ".tmp"]:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            plus_counters = {_str_to_plus_key(k): v for k, v in data.get("counters", {}).items()}
-            plus_names = {int(k): v for k, v in data.get("names", {}).items()}
-            raw_msgs = data.get("counted_msgs", {})
-            if isinstance(raw_msgs, list):
-                plus_counted_msgs = {}
-            else:
-                plus_counted_msgs = {_str_to_plus_key(k): v for k, v in raw_msgs.items()}
-            logging.info(f"plus_data loaded from file: {len(plus_counters)} counters")
-            return
-        except FileNotFoundError:
-            continue
-        except Exception as e:
-            logging.warning(f"load_plus_data error ({path}): {e}")
+  def load_plus_data() -> None:
+      global plus_counters, plus_names, plus_counted_msgs
+      col = mongo_col('plus_data')
+      if col is None:
+          logging.warning("MongoDB not available — plus_data will be empty.")
+          return
+      try:
+          doc = col.find_one({'_type': 'plus_data'})
+          if doc:
+              plus_counters = {_str_to_plus_key(k): v for k, v in doc.get("counters", {}).items()}
+              plus_names = {int(k): v for k, v in doc.get("names", {}).items()}
+              raw_msgs = doc.get("counted_msgs", {})
+              plus_counted_msgs = {} if isinstance(raw_msgs, list) else {_str_to_plus_key(k): v for k, v in raw_msgs.items()}
+              logging.info(f"plus_data loaded from MongoDB: {len(plus_counters)} counters")
+      except Exception as e:
+          logging.error(f"load_plus_data MongoDB error: {e}")
 
 
-load_plus_data()
+  load_plus_data()
 
 
-# ============================================================
-# DATA MSG MAP - MongoDB backed
-# ============================================================
-DATA_MSG_MAP_FILE = os.path.join(os.path.dirname(__file__), "data_msg_map.json")
-data_msg_map: dict = {}
+  # ============================================================
+  # DATA MSG MAP - MongoDB backed
+  # ============================================================
+  data_msg_map: dict = {}
 
 
-def _data_key_to_str(key: tuple) -> str:
-    return f"{key[0]}:{key[1]}"
+  def _data_key_to_str(key: tuple) -> str:
+      return f"{key[0]}:{key[1]}"
 
 
-def _str_to_data_key(s: str) -> tuple:
-    parts = s.split(":", 1)
-    return (int(parts[0]), int(parts[1]))
+  def _str_to_data_key(s: str) -> tuple:
+      parts = s.split(":", 1)
+      return (int(parts[0]), int(parts[1]))
 
 
-def save_data_msg_map() -> None:
-    col = mongo_col('data_msg_map')
-    if col is not None:
-        try:
-            serializable = {_data_key_to_str(k): v for k, v in data_msg_map.items()}
-            col.update_one({'_type': 'data_msg_map'}, {'$set': {'_type': 'data_msg_map', 'data': serializable}}, upsert=True)
-            return
-        except Exception as e:
-            logging.warning(f"MongoDB save_data_msg_map failed, using file: {e}")
-
-    tmp_path = DATA_MSG_MAP_FILE + ".tmp"
-    try:
-        serializable = {_data_key_to_str(k): v for k, v in data_msg_map.items()}
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(serializable, f, ensure_ascii=False)
-        os.replace(tmp_path, DATA_MSG_MAP_FILE)
-    except Exception as e:
-        logging.warning(f"save_data_msg_map error: {e}")
+  def save_data_msg_map() -> None:
+      col = mongo_col('data_msg_map')
+      if col is None:
+          logging.warning("MongoDB not available — data_msg_map not saved.")
+          return
+      try:
+          serializable = {_data_key_to_str(k): v for k, v in data_msg_map.items()}
+          col.update_one({'_type': 'data_msg_map'}, {'$set': {'_type': 'data_msg_map', 'data': serializable}}, upsert=True)
+      except Exception as e:
+          logging.error(f"save_data_msg_map MongoDB error: {e}")
 
 
-def load_data_msg_map() -> None:
-    global data_msg_map
-
-    col = mongo_col('data_msg_map')
-    if col is not None:
-        try:
-            doc = col.find_one({'_type': 'data_msg_map'})
-            if doc:
-                raw = doc.get('data', {})
-                data_msg_map = {_str_to_data_key(k): v for k, v in raw.items()}
-                logging.info(f"data_msg_map loaded from MongoDB: {len(data_msg_map)} entries")
-                return
-        except Exception as e:
-            logging.warning(f"MongoDB load_data_msg_map failed, using file: {e}")
-
-    for path in [DATA_MSG_MAP_FILE, DATA_MSG_MAP_FILE + ".tmp"]:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            data_msg_map = {_str_to_data_key(k): v for k, v in raw.items()}
-            logging.info(f"data_msg_map loaded from file: {len(data_msg_map)} entries")
-            return
-        except FileNotFoundError:
-            continue
-        except Exception as e:
-            logging.warning(f"load_data_msg_map error ({path}): {e}")
+  def load_data_msg_map() -> None:
+      global data_msg_map
+      col = mongo_col('data_msg_map')
+      if col is None:
+          logging.warning("MongoDB not available — data_msg_map will be empty.")
+          return
+      try:
+          doc = col.find_one({'_type': 'data_msg_map'})
+          if doc:
+              raw = doc.get('data', {})
+              data_msg_map = {_str_to_data_key(k): v for k, v in raw.items()}
+              logging.info(f"data_msg_map loaded from MongoDB: {len(data_msg_map)} entries")
+      except Exception as e:
+          logging.error(f"load_data_msg_map MongoDB error: {e}")
 
 
-load_data_msg_map()
+  load_data_msg_map()
+  
+
 
 
 # ============================================================
@@ -1291,13 +1218,36 @@ async def admin_panel_callback(update: Update, context: CallbackContext) -> None
 
 
 async def _bot_settings_inline(query, context: CallbackContext) -> int:
+    col = mongo_col('bot_settings')
+    saved_info = ""
+    if col is not None:
+        try:
+            doc = col.find_one({'_type': 'bot_settings'})
+            if doc and doc.get('updated_at'):
+                saved_info = f"\n\n\U0001f4e6 Last saved: {doc['updated_at'][:16]}"
+        except Exception:
+            pass
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✏️ Name", callback_data='admbs_name'),
-         InlineKeyboardButton("📝 About", callback_data='admbs_about')],
-        [InlineKeyboardButton("📄 Description", callback_data='admbs_desc')],
+        [
+            InlineKeyboardButton("✏️ Bot Name", callback_data='admbs_name'),
+            InlineKeyboardButton("U0001f4dd Short About", callback_data='admbs_about'),
+        ],
+        [
+            InlineKeyboardButton("U0001f4c4 Description", callback_data='admbs_desc'),
+        ],
         [InlineKeyboardButton("❌ Cancel", callback_data='admbs_cancel')],
     ])
-    await query.edit_message_text("⚙️ <b>Bot Settings</b>\nဘာပြောင်းလဲလိုပါသလဲ?", parse_mode='HTML', reply_markup=keyboard)
+    text_lines = [
+        "⚙️ <b>Bot Settings</b>",
+        "━" * 20,
+        "ပြောင်းလစ်လိုသည့် setting ကိုနှိပပာ:",
+        "",
+        "• <b>Bot Name</b> — Telegram အခြာပြသောနာမည်သ",
+        "• <b>Short About</b> — Profile အခြာအကျည်ချုပ်",
+        "• <b>Description</b> — Bot ဖွင်မည့်အခာပြသောဖောဖြောချက်",
+    ]
+    msg = "\n".join(text_lines) + saved_info
+    await query.edit_message_text(msg, parse_mode='HTML', reply_markup=keyboard)
     return BOT_SETTINGS_SELECT
 
 
@@ -1327,7 +1277,22 @@ async def bot_settings_apply(update: Update, context: CallbackContext) -> int:
             await context.application.bot.set_my_short_description(text)
         elif field == 'desc':
             await context.application.bot.set_my_description(text)
-        await update.message.reply_text(f"✅ Bot {field} → '{text}' ပြောင်းပြီးပါပြီ။")
+        col = mongo_col('bot_settings')
+        if col is not None:
+            try:
+                col.update_one(
+                    {'_type': 'bot_settings'},
+                    {'$set': {f'setting_{field}': text, 'updated_at': datetime.utcnow().isoformat()}},
+                    upsert=True
+                )
+            except Exception as db_err:
+                logging.warning(f"bot_settings MongoDB save error: {db_err}")
+        labels = {'name': 'Name', 'about': 'Short About', 'desc': 'Description'}
+        await update.message.reply_text(
+            f"✅ Bot <b>{labels.get(field, field)}</b> ကို ‘{text}’ သိုပြောင်ပြီးပီးပီးပာပြီးသည်\n"
+            f"U0001f4e6 MongoDB ထဲဘ သိမ်ပြီးပီးပီးပာပြီးသည်၊",
+            parse_mode='HTML'
+        )
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
     return ConversationHandler.END
@@ -1983,64 +1948,146 @@ async def reset_plus_command(update: Update, context: CallbackContext) -> None:
 # GUIDE
 # ============================================================
 
-async def guide_command(update: Update, context: CallbackContext) -> None:
-    await save_chat_id(update.effective_chat.id, context, update.effective_chat.type)
-    guide_text = (
-        "📖 *Bot အသုံးပြုနည်း လမ်းညွှန်ချက်*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-
-        "📋 *Report Form ပုံစံ*\n"
-        "/form ကိုနှိပ်ပြီး template ကူးယူပါ\n"
-        "Gmail, Tele name, Username, Date, Age,\n"
-        "Current work, Phone number, ID, Khaifa\n"
-        "ဖြည့်ပြီး group ထဲ paste လုပ်ပါ\n\n"
-
-        "🆔 *ID စစ်ဆေးစနစ်*\n"
-        "Report ပို့လိုက်သည်နှင့် ID ကို အလိုအလျောက် စစ်ဆေးသည်\n"
-        "⚠️ ရောက်ပြီးသား client ဆိုပါက bot က အသိပေးမည်\n"
-        "/checkid \\<ID\\> — ID တစ်ခုကို သီးသန့်စစ်နိုင်သည်\n\n"
-
-        "📊 */showdata*\n"
-        "ယနေ့ deposit data တစ်စုတစ်စည်း ထုတ်ပေးသည်\n\n"
-
-        "🗑️ */cleardata*\n"
-        "ယနေ့ data နှင့် plus counter ရှင်းလင်းသည် \\(အလုပ်မဆင်းခင် သုံးပါ\\)\n\n"
-
-        "‼️ *Deposit Data ဖျက်နည်း*\n"
-        "Bot reply ပြန်သော message ကို \\- ဖြင့် reply ပြန်ပါ\n\n"
-
-        "✉️ */feedback*\n"
-        "Admin ထံ မှတ်ချက် ပေးပို့သည်\n\n"
-
-        "🧮 *Math Calculator*\n"
-        "Bot PM တွင် expression ရိုက်ပါ \\(e.g\\. 2\\+2, 15\\*15\\)\n\n"
-
-        "➕ *Plus Counter*\n"
-        "Message ကို \\+ reply → bot က \\+1, \\+2\\.\\.\\. ရေတွက်\n"
-        "မှားရင် \\- reply → ပယ်ဖျက်ပေးသည်\n\n"
-
-        "📊 */total\\_plus*\n"
-        "Plus counter summary ကြည့်သည်\n\n"
-
-        "🔄 */reset\\_plus*\n"
-        "Plus counter ရှင်းလင်းသည်\n\n"
-
-        "🙈 */hidemenu*\n"
-        "Keyboard ဖျောက်သည်\n\n"
-
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "⚠️ *ID Duplicate သတိပေးပုံစံ*\n"
-        "⚠️ ဤ client သည် ရောက်ပြီးသားဖြစ်ပါသည်\\.⚠️\n"
-        "အောက်တွင်ဖော်ပြထားသည်\\.ဘယ်အဆင့်ရောက်နေလဲမေးမြန်းပါ\\.\n"
-        "Deposit \\- @example\n"
-        "Gmail \\- example\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "🤖 *Bot owner* \\- @satepryin1khouklite1"
-    )
-    await update.message.reply_text(guide_text, parse_mode='MarkdownV2')
-
-
 # ============================================================
+  # GUIDE PAGES - Multi-page inline navigation
+  # ============================================================
+
+  GUIDE_PAGES = [
+      {
+          "title": "📖 Bot လမ်းညွှန် (1/6) — Report Form",
+          "text": (
+              "<b>📋 Report Form ပုံစံ</b>\n"
+              "━━━━━━━━━━━━━━━━━━━━\n\n"
+              "/form ကိုနှိပ်၍ template ကူးယူပါ။\n\n"
+              "<b>ဖြည့်ရမည့် field များ:</b>\n"
+              "• Gmail\n"
+              "• Tele name\n"
+              "• Username\n"
+              "• Date\n"
+              "• Age\n"
+              "• Current work\n"
+              "• Phone number\n"
+              "• ID\n"
+              "• Khaifa\n\n"
+              "ဖြည့်ပြီးပါက group ထဲ paste လုပ်ပါ။"
+          ),
+      },
+      {
+          "title": "📖 Bot လမ်းညွှန် (2/6) — ID စစ်ဆေးစနစ်",
+          "text": (
+              "<b>🆔 ID စစ်ဆေးစနစ်</b>\n"
+              "━━━━━━━━━━━━━━━━━━━━\n\n"
+              "Report ပို့သည်နှင့် ID ကို <b>အလိုအလျောက်</b> စစ်ဆေးသည်။\n\n"
+              "⚠️ ရောက်ပြီးသား client ဆိုပါက bot က ချက်ချင်း အသိပေးမည်:\n\n"
+              "<i>⚠️ ဤ client သည် ရောက်ပြီးသားဖြစ်ပါသည်။\n"
+              "ဘယ်အဆင့်ရောက်နေလဲမေးမြန်းပါ။</i>\n\n"
+              "<b>သီးသန့်စစ်ဆေးနည်း:</b>\n"
+              "<code>/checkid &lt;ID&gt;</code>\n"
+              "ဥပမာ: <code>/checkid 1234567890</code>\n\n"
+              "ကျွမ်းကျင်သူများ admin panel မှ ID record ကြည့်နိုင်သည်။"
+          ),
+      },
+      {
+          "title": "📖 Bot လမ်းညွှန် (3/6) — Data စီမံခန့်ခွဲမှု",
+          "text": (
+              "<b>📊 Data စီမံခန့်ခွဲမှု</b>\n"
+              "━━━━━━━━━━━━━━━━━━━━\n\n"
+              "<b>/showdata</b>\n"
+              "ယနေ့ deposit data တစ်စုတစ်စည်းထုတ်ပေးသည်။\n\n"
+              "<b>/cleardata</b>\n"
+              "ယနေ့ data နှင့် plus counter ရှင်းလင်းသည်။\n"
+              "⚠️ နေ့တိုင်း အလုပ်မဆင်းမီ သုံးပါ။\n\n"
+              "<b>‼️ Data တစ်ခုတည်း ဖျက်နည်း:</b>\n"
+              "Bot reply ပြန်သော message ကို\n"
+              "<code>-</code> ဖြင့် reply ပြန်ပါ → ဆောင်ရွက်ပေးမည်။\n\n"
+              "<b>/deposit_total</b> — Deposit report ကြည့်\n"
+              "<b>/whatsapp_total</b> — WhatsApp report ကြည့်"
+          ),
+      },
+      {
+          "title": "📖 Bot လမ်းညွှန် (4/6) — Plus Counter",
+          "text": (
+              "<b>➕ Plus Counter စနစ်</b>\n"
+              "━━━━━━━━━━━━━━━━━━━━\n\n"
+              "Message ကို <code>+</code> ဖြင့် reply ပြန်ပါ\n"
+              "→ bot က <b>+1, +2, +3...</b> ရေတွက်ပေးမည်။\n\n"
+              "မှားမိပါက <code>-</code> ဖြင့် reply → ပယ်ဖျက်ပေးမည်။\n\n"
+              "<b>/total_plus</b> — Plus counter summary ကြည့်\n"
+              "<b>/reset_plus</b> — Plus counter ရှင်းလင်း\n\n"
+              "<b>🧮 Math Calculator</b>\n"
+              "Bot PM ထဲတွင် expression ရိုက်ရုံဖြင့် တွက်ပေးသည်:\n"
+              "ဥပမာ: <code>2+2</code>, <code>15*15</code>, <code>100/4</code>"
+          ),
+      },
+      {
+          "title": "📖 Bot လမ်းညွှန် (5/6) — ✉️ Feedback & Menu",
+          "text": (
+              "<b>✉️ Feedback ပေးပို့နည်း</b>\n"
+              "━━━━━━━━━━━━━━━━━━━━\n\n"
+              "/feedback ကိုနှိပ်ပြီး\n"
+              "Admin ထံ မှတ်ချက်/အကြံပြုချက် ပေးပို့နိုင်သည်။\n\n"
+              "<b>📱 Menu စီမံခန့်ခွဲမှု</b>\n"
+              "<b>/menu</b> — Main menu ဖွင့်\n"
+              "<b>/start</b> — Bot စတင် / menu ပြ\n"
+              "<b>/hidemenu</b> — Keyboard ဖျောက်\n\n"
+              "<b>🔎 Command အားလုံး:</b>\n"
+              "<b>/help</b> ကိုနှိပ်ပြီး command list အပြည့်ကြည့်နိုင်သည်။"
+          ),
+      },
+      {
+          "title": "📖 Bot လမ်းညွှန် (6/6) — ⚠️ Duplicate ID သတိပေးပုံ",
+          "text": (
+              "<b>⚠️ ID Duplicate သတိပေးပုံစံ</b>\n"
+              "━━━━━━━━━━━━━━━━━━━━\n\n"
+              "Duplicate စစ်ဆေးတွေ့ပါက bot က ဤပုံစံဖြင့် သတိပေးမည်:\n\n"
+              "<i>⚠️ ဤ client သည် ရောက်ပြီးသားဖြစ်ပါသည်။⚠️\n"
+              "အောက်တွင်ဖော်ပြထားသည်။ဘယ်အဆင့်ရောက်နေလဲမေးမြန်းပါ။\n"
+              "Deposit - @example\n"
+              "Gmail - example</i>\n\n"
+              "Data အားလုံးကို <b>MongoDB</b> ထဲ ဘေးကင်းစွာ သိမ်းဆည်းထားသည်။\n\n"
+              "━━━━━━━━━━━━━━━━━━━━\n"
+              "🤖 <b>Bot owner</b> — @satepryin1khouklite1"
+          ),
+      },
+  ]
+
+
+  def _guide_keyboard(page: int) -> InlineKeyboardMarkup:
+      total = len(GUIDE_PAGES)
+      row = []
+      if page > 0:
+          row.append(InlineKeyboardButton("⬅️ Back", callback_data=f"guide_page_{page - 1}"))
+      row.append(InlineKeyboardButton("🏠 Home", callback_data="guide_page_0"))
+      if page < total - 1:
+          row.append(InlineKeyboardButton("Next ➡️", callback_data=f"guide_page_{page + 1}"))
+      return InlineKeyboardMarkup([row])
+
+
+  async def guide_command(update: Update, context: CallbackContext) -> None:
+      await save_chat_id(update.effective_chat.id, context, update.effective_chat.type)
+      page = GUIDE_PAGES[0]
+      await update.message.reply_text(
+          f"{page['title']}\n━━━━━━━━━━━━━━━━━━━━\n\n{page['text']}",
+          parse_mode='HTML',
+          reply_markup=_guide_keyboard(0)
+      )
+
+
+  async def guide_callback(update: Update, context: CallbackContext) -> None:
+      query = update.callback_query
+      await query.answer()
+      page_idx = int(query.data.split("_")[-1])
+      if page_idx < 0 or page_idx >= len(GUIDE_PAGES):
+          return
+      page = GUIDE_PAGES[page_idx]
+      await query.edit_message_text(
+          f"{page['title']}\n━━━━━━━━━━━━━━━━━━━━\n\n{page['text']}",
+          parse_mode='HTML',
+          reply_markup=_guide_keyboard(page_idx)
+      )
+
+  
+
 # POST INIT
 # ============================================================
 

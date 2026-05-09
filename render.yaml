@@ -2,7 +2,7 @@ services:
   - type: web
     name: telegram-bot
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && python3 telegram-bot/migrate_data.py || true
     startCommand: python3 telegram-bot/main.py
     envVars:
       - key: TELEGRAM_BOT_TOKEN

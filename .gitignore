@@ -1,64 +1,68 @@
 # See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
 
-# compiled output
-dist
-tmp
-out-tsc
-*.tsbuildinfo
-.expo
-.expo-shared
+  # compiled output
+  dist
+  tmp
+  out-tsc
+  *.tsbuildinfo
+  .expo
+  .expo-shared
 
-# dependencies
-node_modules
+  # dependencies
+  node_modules
 
-# IDEs and editors
-/.idea
-.project
-.classpath
-.c9/
-*.launch
-.settings/
-*.sublime-workspace
+  # IDEs and editors
+  /.idea
+  .project
+  .classpath
+  .c9/
+  *.launch
+  .settings/
+  *.sublime-workspace
 
-# IDE - VSCode
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
+  # IDE - VSCode
+  .vscode/*
+  !.vscode/settings.json
+  !.vscode/tasks.json
+  !.vscode/launch.json
+  !.vscode/extensions.json
 
-# misc
-/.sass-cache
-/connect.lock
-/coverage
-/libpeerconnection.log
-npm-debug.log
-yarn-error.log
-testem.log
-/typings
+  # misc
+  /.sass-cache
+  /connect.lock
+  /coverage
+  /libpeerconnection.log
+  npm-debug.log
+  yarn-error.log
+  testem.log
+  /typings
 
-# System Files
-.DS_Store
-Thumbs.db
+  # System Files
+  .DS_Store
+  Thumbs.db
 
-.cursor/rules/nx-rules.mdc
-.github/instructions/nx.instructions.md
+  .cursor/rules/nx-rules.mdc
+  .github/instructions/nx.instructions.md
 
-# Replit
-.cache/
-.local/
+  # Replit
+  .cache/
+  .local/
 
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.egg-info/
+  # Python
+  __pycache__/
+  *.py[cod]
+  *.pyo
+  *.pyd
+  *.egg-info/
 
-# Bot runtime data (sensitive)
-telegram-bot/bot_data.pickle
-telegram-bot/*.tmp
+  # Bot runtime data (sensitive)
+  telegram-bot/bot_data.pickle
+  telegram-bot/*.tmp
+  telegram-bot/id_registry.json
+  telegram-bot/plus_data.json
+  telegram-bot/data_msg_map.json
 
-# Env
-.env
-.env.*
+  # Env
+  .env
+  .env.*
+  

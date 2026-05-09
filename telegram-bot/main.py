@@ -1,7 +1,6 @@
 import os
 import re
 import io
-import json
 import math
 import logging
 import asyncio
@@ -14,15 +13,6 @@ try:
     from langdetect import detect as langdetect_detect
 except Exception:
     langdetect_detect = None
-
-try:
-    from pymongo import MongoClient, UpdateOne
-    from pymongo.errors import ConnectionFailure, OperationFailure
-    MONGO_AVAILABLE = True
-except ImportError:
-    MONGO_AVAILABLE = False
-    logging.warning("pymongo not installed. MongoDB features disabled.")
-
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ConversationHandler,
@@ -44,7 +34,6 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-MONGO_URI = os.getenv('MONGO_URI')
 
 ADMIN_IDS = [7196380140, 1827336632, 7039073770]
 
@@ -62,44 +51,6 @@ BOT_SETTINGS_SELECT   = 40
 BOT_SETTINGS_AWAITING = 41
 
 
-# ============================================================
-# MONGODB CONNECTION
-# ============================================================
-
-_mongo_client = None
-_mongo_db = None
-
-
-def get_mongo_db():
-    global _mongo_client, _mongo_db
-    if not MONGO_AVAILABLE:
-        return None
-    if _mongo_db is not None:
-        return _mongo_db
-    try:
-        _mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-        _mongo_client.admin.command('ping')
-        _mongo_db = _mongo_client['telegram_bot_db']
-        logging.info("MongoDB Atlas connected successfully.")
-        return _mongo_db
-    except Exception as e:
-        logging.error(f"MongoDB connection failed: {e}")
-        return None
-
-
-def mongo_col(name: str):
-    db = get_mongo_db()
-    if db is None:
-        return None
-    return db[name]
-
-
-# ============================================================
-# ID REGISTRY - MongoDB backed
-# ============================================================
-
-
-# ============================================================
 # PLUS COUNTER DATA - MongoDB backed
 # ============================================================
 
@@ -118,40 +69,11 @@ def _str_to_plus_key(s: str) -> tuple:
 
 
 def save_plus_data() -> None:
-    col = mongo_col('plus_data')
-    if col is None:
-        logging.warning("MongoDB not available — plus_data not saved.")
-        return
-    try:
-        data = {
-            "counters":     {_plus_key_to_str(k): v for k, v in plus_counters.items()},
-            "names":        {str(k): v for k, v in plus_names.items()},
-            "counted_msgs": {_plus_key_to_str(k): v for k, v in plus_counted_msgs.items()},
-        }
-        col.update_one({'_type': 'plus_data'}, {'$set': {'_type': 'plus_data', **data}}, upsert=True)
-    except Exception as e:
-        logging.error(f"save_plus_data MongoDB error: {e}")
+    pass  # in-memory only
 
 
 def load_plus_data() -> None:
-    global plus_counters, plus_names, plus_counted_msgs
-    col = mongo_col('plus_data')
-    if col is None:
-        logging.warning("MongoDB not available — plus_data will be empty.")
-        return
-    try:
-        doc = col.find_one({'_type': 'plus_data'})
-        if doc:
-            plus_counters = {_str_to_plus_key(k): v for k, v in doc.get("counters", {}).items()}
-            plus_names = {int(k): v for k, v in doc.get("names", {}).items()}
-            raw_msgs = doc.get("counted_msgs", {})
-            plus_counted_msgs = {} if isinstance(raw_msgs, list) else {_str_to_plus_key(k): v for k, v in raw_msgs.items()}
-            logging.info(f"plus_data loaded from MongoDB: {len(plus_counters)} counters")
-    except Exception as e:
-        logging.error(f"load_plus_data MongoDB error: {e}")
-
-
-load_plus_data()
+    pass  # in-memory only; starts fresh each restart
 
 
 # ============================================================
@@ -170,36 +92,11 @@ def _str_to_data_key(s: str) -> tuple:
 
 
 def save_data_msg_map() -> None:
-    col = mongo_col('data_msg_map')
-    if col is None:
-        logging.warning("MongoDB not available — data_msg_map not saved.")
-        return
-    try:
-        serializable = {_data_key_to_str(k): v for k, v in data_msg_map.items()}
-        col.update_one({'_type': 'data_msg_map'}, {'$set': {'_type': 'data_msg_map', 'data': serializable}}, upsert=True)
-    except Exception as e:
-        logging.error(f"save_data_msg_map MongoDB error: {e}")
+    pass  # in-memory only
 
 
 def load_data_msg_map() -> None:
-    global data_msg_map
-    col = mongo_col('data_msg_map')
-    if col is None:
-        logging.warning("MongoDB not available — data_msg_map will be empty.")
-        return
-    try:
-        doc = col.find_one({'_type': 'data_msg_map'})
-        if doc:
-            raw = doc.get('data', {})
-            data_msg_map = {_str_to_data_key(k): v for k, v in raw.items()}
-            logging.info(f"data_msg_map loaded from MongoDB: {len(data_msg_map)} entries")
-    except Exception as e:
-        logging.error(f"load_data_msg_map MongoDB error: {e}")
-
-
-load_data_msg_map()
-  
-
+    pass  # in-memory only; starts fresh each restart
 
 
 # ============================================================
@@ -948,15 +845,6 @@ async def admin_panel_callback(update: Update, context: CallbackContext) -> None
 
 
 async def _bot_settings_inline(query, context: CallbackContext) -> int:
-    col = mongo_col('bot_settings')
-    saved_info = ""
-    if col is not None:
-        try:
-            doc = col.find_one({'_type': 'bot_settings'})
-            if doc and doc.get('updated_at'):
-                saved_info = f"\n\n\U0001f4e6 Last saved: {doc['updated_at'][:16]}"
-        except Exception:
-            pass
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✏️ Bot Name", callback_data='admbs_name'),
@@ -967,17 +855,15 @@ async def _bot_settings_inline(query, context: CallbackContext) -> int:
         ],
         [InlineKeyboardButton("❌ Cancel", callback_data='admbs_cancel')],
     ])
-    text_lines = [
-        "⚙️ <b>Bot Settings</b>",
-        "━" * 20,
-        "ပြောင်းလစ်လိုသည့် setting ကိုနှိပပာ:",
-        "",
-        "• <b>Bot Name</b> — Telegram အခြာပြသောနာမည်သ",
-        "• <b>Short About</b> — Profile အခြာအကျည်ချုပ်",
+    await query.edit_message_text(
+        "⚙️ <b>Bot Settings</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        "ပြောင်းလစ်လိုသည့် setting ကိုနှိပပာ:\n\n"
+        "• <b>Bot Name</b> — Telegram အခြာပြသောနာမည်သ\n"
+        "• <b>Short About</b> — Profile အခြာအကျည်ချုပ်\n"
         "• <b>Description</b> — Bot ဖွင်မည့်အခာပြသောဖောဖြောချက်",
-    ]
-    msg = "\n".join(text_lines) + saved_info
-    await query.edit_message_text(msg, parse_mode='HTML', reply_markup=keyboard)
+        parse_mode='HTML',
+        reply_markup=keyboard
+    )
     return BOT_SETTINGS_SELECT
 
 
@@ -1007,20 +893,9 @@ async def bot_settings_apply(update: Update, context: CallbackContext) -> int:
             await context.application.bot.set_my_short_description(text)
         elif field == 'desc':
             await context.application.bot.set_my_description(text)
-        col = mongo_col('bot_settings')
-        if col is not None:
-            try:
-                col.update_one(
-                    {'_type': 'bot_settings'},
-                    {'$set': {f'setting_{field}': text, 'updated_at': datetime.utcnow().isoformat()}},
-                    upsert=True
-                )
-            except Exception as db_err:
-                logging.warning(f"bot_settings MongoDB save error: {db_err}")
         labels = {'name': 'Name', 'about': 'Short About', 'desc': 'Description'}
         await update.message.reply_text(
-            f"✅ Bot <b>{labels.get(field, field)}</b> ကို ‘{text}’ သိုပြောင်ပြီးပီးပီးပာပြီးသည်\n"
-            f"U0001f4e6 MongoDB ထဲဘ သိမ်ပြီးပီးပီးပာပြီးသည်၊",
+            f"✅ Bot <b>{labels.get(field, field)}</b> ‘{text}’ သိုပြောင်ပြီးပီးပီးပာပြီးသည်၊",
             parse_mode='HTML'
         )
     except Exception as e:
@@ -1503,8 +1378,6 @@ async def schedule_cancel(update: Update, context: CallbackContext) -> int:
 
 
 async def listschedules_command(update: Update, context: CallbackContext) -> None:
-    if update.effective_user.id not in ADMIN_IDS:
-        return
     schedules = context.application.bot_data.get('schedules', {})
     if not schedules:
         await update.message.reply_text("⏰ Active schedule မရှိသေးပါ။")
@@ -1519,8 +1392,6 @@ async def listschedules_command(update: Update, context: CallbackContext) -> Non
 
 
 async def removeschedule_command(update: Update, context: CallbackContext) -> None:
-    if update.effective_user.id not in ADMIN_IDS:
-        return
     if not context.args:
         await update.message.reply_text("Usage: /removeschedule <schedule_id>\n/listschedules ဖြင့် IDs ကြည့်ပါ")
         return
@@ -1823,7 +1694,7 @@ async def post_init(application: Application) -> None:
         BotCommand("stats",          "Bot stats (Admin)"),
         BotCommand("listusers",      "User list (Admin)"),
         BotCommand("listgroups",     "Group list (Admin)"),
-        BotCommand("listschedules",  "Schedule list (Admin)"),
+        BotCommand("listschedules",  "Schedule list"),
         BotCommand("admin",          "Admin panel (Admin)"),
         BotCommand("clearall",       "Data အားလုံး ရှင်း (Admin PM)"),
         BotCommand("resetplusall",   "Plus counter အားလုံး reset (Admin PM)"),
@@ -1888,17 +1759,7 @@ def main():
         logging.error("TELEGRAM_BOT_TOKEN is not set!")
         return
 
-    if MONGO_AVAILABLE and MONGO_URI:
-        try:
-            from mongo_persistence import MongoPersistence
-            persistence = MongoPersistence(mongo_uri=MONGO_URI, db_name='telegram_bot_db')
-            logging.info("Using MongoPersistence (MongoDB) for bot data.")
-        except Exception as e:
-            logging.warning(f"MongoPersistence load failed, falling back to PicklePersistence: {e}")
-            persistence = PicklePersistence(filepath=os.path.join(os.path.dirname(__file__), 'bot_data.pickle'))
-    else:
-        logging.info("MONGO_URI not set or pymongo unavailable. Using PicklePersistence.")
-        persistence = PicklePersistence(filepath=os.path.join(os.path.dirname(__file__), 'bot_data.pickle'))
+    persistence = PicklePersistence(filepath=os.path.join(os.path.dirname(__file__), 'bot_data.pickle'))
 
     application = (
         Application.builder()
@@ -1983,7 +1844,7 @@ def main():
     application.add_handler(broadcast_handler)
 
     schedule_handler = ConversationHandler(
-        entry_points=[CommandHandler("setschedule", setschedule_command, filters=filters.User(ADMIN_IDS))],
+        entry_points=[CommandHandler("setschedule", setschedule_command)],
         states={
             SCHEDULE_SET_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, schedule_set_time)],
             SCHEDULE_SET_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, schedule_set_message)],

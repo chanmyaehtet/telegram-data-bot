@@ -99,6 +99,18 @@ def load_data_msg_map() -> None:
     pass  # in-memory only; starts fresh each restart
 
 
+
+# ============================================================
+# STUB: get_mongo_db and get_all_duplicate_ids (MongoDB removed)
+# ============================================================
+def get_mongo_db():
+    return None
+
+
+def get_all_duplicate_ids() -> list:
+    return []
+
+
 # ============================================================
 # REPORT TEMPLATE
 # ============================================================
@@ -763,9 +775,6 @@ async def stats(update: Update, context: CallbackContext) -> None:
     duplicates = get_all_duplicate_ids()
     dup_count = len(duplicates)
 
-    db = get_mongo_db()
-    mongo_status = "✅ ချိတ်ဆက်ပြီး" if db is not None else "❌ ချိတ်ဆက်မရ"
-
     dup_preview = ""
     if duplicates:
         top5 = duplicates[:5]
@@ -780,10 +789,7 @@ async def stats(update: Update, context: CallbackContext) -> None:
         f"📊 <b>Bot Statistics</b>\n\n"
         f"👤 Users (PM): {user_count}\n"
         f"👥 Groups: {group_count}\n\n"
-        f"🆔 <b>ID Registry</b>\n"
-        f"  စုစုပေါင်း IDs: {total_ids}\n"
-        f"  Duplicate IDs: {dup_count}\n\n"
-        f"🗄️ MongoDB: {mongo_status}"
+        f"🆔 Duplicate IDs: {dup_count}"
         f"{dup_preview}",
         parse_mode='HTML'
     )
@@ -819,10 +825,8 @@ async def admin_panel_callback(update: Update, context: CallbackContext) -> None
         user_count = len(context.application.bot_data.get('users', set()))
         group_count = len(context.application.bot_data.get('groups', set()))
         dup_count = len(get_all_duplicate_ids())
-        db = get_mongo_db()
-        mongo_status = "✅" if db is not None else "❌"
         await query.edit_message_text(
-            f"📊 Users: {user_count}\nGroups: {group_count}\n🔁 Duplicates: {dup_count}\n🗄️ MongoDB: {mongo_status}"
+            f"📊 Users: {user_count}\nGroups: {group_count}\n🔁 Duplicates: {dup_count}"
         )
     elif data == 'adm_groups':
         groups = context.application.bot_data.get('groups', set())
@@ -839,6 +843,7 @@ async def admin_panel_callback(update: Update, context: CallbackContext) -> None
                 poster_names = ", ".join(dup['posters'])
                 lines.append(f"{i}. <code>{dup['id']}</code> — {dup['poster_count']} posters\n   {poster_names}")
             if len(duplicates) > 10:
+                lines.append(f"... နှင့် {len(duplicates) - 10} ခု ထပ်ရှိ")
             await query.edit_message_text("\n".join(lines), parse_mode='HTML')
     elif data == 'adm_botsettings':
         await _bot_settings_inline(query, context)
@@ -1630,7 +1635,7 @@ GUIDE_PAGES = [
             "အောက်တွင်ဖော်ပြထားသည်။ဘယ်အဆင့်ရောက်နေလဲမေးမြန်းပါ။\n"
             "Deposit - @example\n"
             "Gmail - example</i>\n\n"
-            "Data အားလုံးကို <b>MongoDB</b> ထဲ ဘေးကင်းစွာ သိမ်းဆည်းထားသည်။\n\n"
+
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🤖 <b>Bot owner</b> — @satepryin1khouklite1"
         ),

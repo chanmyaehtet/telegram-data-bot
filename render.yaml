@@ -7,6 +7,8 @@ services:
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
+      - key: MONGO_URI
+        sync: false
       - key: BOT_KEEPALIVE_PORT
         value: "10000"
     autoDeploy: true

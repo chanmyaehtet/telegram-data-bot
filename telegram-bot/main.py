@@ -547,6 +547,9 @@ async def show_data(update: Update, context: CallbackContext) -> None:
 
 
 async def extract_and_save_data(update: Update, context: CallbackContext) -> None:
+    if not update.message:
+        return
+
     chat_id = str(update.effective_chat.id)
     await save_chat_id(update.effective_chat.id, context, update.effective_chat.type)
 

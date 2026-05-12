@@ -7,7 +7,10 @@ import asyncio
 import threading
 import pytz
 import requests
+import json
 from datetime import datetime, time, timedelta
+from pymongo import MongoClient
+from pymongo.errors import PyMongoError
 
 try:
     from langdetect import detect as langdetect_detect
@@ -51,7 +54,33 @@ BOT_SETTINGS_SELECT   = 40
 BOT_SETTINGS_AWAITING = 41
 
 
-# PLUS COUNTER DATA
+# ============================================================
+# MONGODB CONNECTION
+# ============================================================
+_mongo_client = None
+_mongo_db = None
+
+def get_mongo_db():
+    global _mongo_client, _mongo_db
+    if _mongo_db is not None:
+        return _mongo_db
+    uri = os.getenv("MONGODB_URI")
+    if not uri:
+        logging.warning("MONGODB_URI not set — MongoDB disabled")
+        return None
+    try:
+        _mongo_client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+        _mongo_client.admin.command("ping")
+        _mongo_db = _mongo_client["deposit_bot"]
+        logging.info("MongoDB connected OK")
+    except Exception as e:
+        logging.warning(f"MongoDB connection failed: {e}")
+        _mongo_db = None
+    return _mongo_db
+
+
+# ============================================================
+# PLUS COUNTER DATA  (MongoDB-backed, JSON fallback)
 # ============================================================
 PLUS_DATA_FILE = os.path.join(os.path.dirname(__file__), 'plus_data.json')
 
@@ -70,42 +99,62 @@ def _str_to_plus_key(s: str) -> tuple:
 
 
 def save_plus_data() -> None:
+    data = {
+        "counters":     {_plus_key_to_str(k): v for k, v in plus_counters.items()},
+        "names":        {str(k): v for k, v in plus_names.items()},
+        "counted_msgs": {_plus_key_to_str(k): v for k, v in plus_counted_msgs.items()},
+    }
+    # MongoDB save
+    db = get_mongo_db()
+    if db is not None:
+        try:
+            db["plus_data"].replace_one({"_id": "plus_data"}, {"_id": "plus_data", **data}, upsert=True)
+        except PyMongoError as e:
+            logging.warning(f"MongoDB save_plus_data error: {e}")
+    # JSON fallback
     try:
-        data = {
-            "counters":     {_plus_key_to_str(k): v for k, v in plus_counters.items()},
-            "names":        {str(k): v for k, v in plus_names.items()},
-            "counted_msgs": {_plus_key_to_str(k): v for k, v in plus_counted_msgs.items()},
-        }
         with open(PLUS_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
     except Exception as e:
-        logging.warning(f"save_plus_data error: {e}")
+        logging.warning(f"JSON save_plus_data error: {e}")
 
 
 def load_plus_data() -> None:
     global plus_counters, plus_names, plus_counted_msgs
-    try:
-        with open(PLUS_DATA_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        plus_counters     = {_str_to_plus_key(k): v for k, v in data.get("counters", {}).items()}
-        plus_names        = {int(k): v for k, v in data.get("names", {}).items()}
-        raw_msgs = data.get("counted_msgs", {})
-        if isinstance(raw_msgs, list):
-            plus_counted_msgs = {}
-        else:
-            plus_counted_msgs = {_str_to_plus_key(k): v for k, v in raw_msgs.items()}
-        logging.info(f"plus_data loaded: {len(plus_counters)} counters, {len(plus_counted_msgs)} counted msgs")
-    except FileNotFoundError:
-        pass
-    except Exception as e:
-        logging.warning(f"load_plus_data error: {e}")
+    data = None
+    # Try MongoDB first
+    db = get_mongo_db()
+    if db is not None:
+        try:
+            doc = db["plus_data"].find_one({"_id": "plus_data"})
+            if doc:
+                data = doc
+                logging.info("plus_data loaded from MongoDB")
+        except PyMongoError as e:
+            logging.warning(f"MongoDB load_plus_data error: {e}")
+    # Fallback to JSON
+    if data is None:
+        try:
+            with open(PLUS_DATA_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            logging.info("plus_data loaded from JSON fallback")
+        except FileNotFoundError:
+            data = {}
+        except Exception as e:
+            logging.warning(f"JSON load_plus_data error: {e}")
+            data = {}
+    plus_counters     = {_str_to_plus_key(k): v for k, v in data.get("counters", {}).items()}
+    plus_names        = {int(k): v for k, v in data.get("names", {}).items()}
+    raw_msgs = data.get("counted_msgs", {})
+    plus_counted_msgs = {} if isinstance(raw_msgs, list) else {_str_to_plus_key(k): v for k, v in raw_msgs.items()}
+    logging.info(f"plus_data ready: {len(plus_counters)} counters, {len(plus_counted_msgs)} msgs")
 
 
 load_plus_data()
 
 
 # ============================================================
-# DATA MSG MAP
+# DATA MSG MAP  (MongoDB-backed, JSON fallback)
 # ============================================================
 DATA_MSG_MAP_FILE = os.path.join(os.path.dirname(__file__), 'data_msg_map.json')
 data_msg_map: dict = {}
@@ -121,40 +170,128 @@ def _str_to_data_key(s: str) -> tuple:
 
 
 def save_data_msg_map() -> None:
+    serializable = {_data_key_to_str(k): v for k, v in data_msg_map.items()}
+    # MongoDB save
+    db = get_mongo_db()
+    if db is not None:
+        try:
+            db["data_msg_map"].replace_one(
+                {"_id": "data_msg_map"},
+                {"_id": "data_msg_map", "entries": serializable},
+                upsert=True
+            )
+        except PyMongoError as e:
+            logging.warning(f"MongoDB save_data_msg_map error: {e}")
+    # JSON fallback
     try:
-        serializable = {_data_key_to_str(k): v for k, v in data_msg_map.items()}
         with open(DATA_MSG_MAP_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f, ensure_ascii=False)
     except Exception as e:
-        logging.warning(f"save_data_msg_map error: {e}")
+        logging.warning(f"JSON save_data_msg_map error: {e}")
 
 
 def load_data_msg_map() -> None:
     global data_msg_map
-    try:
-        with open(DATA_MSG_MAP_FILE, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        data_msg_map = {_str_to_data_key(k): v for k, v in raw.items()}
-        logging.info(f"data_msg_map loaded: {len(data_msg_map)} entries")
-    except FileNotFoundError:
-        pass
-    except Exception as e:
-        logging.warning(f"load_data_msg_map error: {e}")
+    raw = None
+    # Try MongoDB first
+    db = get_mongo_db()
+    if db is not None:
+        try:
+            doc = db["data_msg_map"].find_one({"_id": "data_msg_map"})
+            if doc:
+                raw = doc.get("entries", {})
+                logging.info("data_msg_map loaded from MongoDB")
+        except PyMongoError as e:
+            logging.warning(f"MongoDB load_data_msg_map error: {e}")
+    # Fallback to JSON
+    if raw is None:
+        try:
+            with open(DATA_MSG_MAP_FILE, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            logging.info("data_msg_map loaded from JSON fallback")
+        except FileNotFoundError:
+            raw = {}
+        except Exception as e:
+            logging.warning(f"JSON load_data_msg_map error: {e}")
+            raw = {}
+    data_msg_map = {_str_to_data_key(k): v for k, v in raw.items()}
+    logging.info(f"data_msg_map ready: {len(data_msg_map)} entries")
 
 
 load_data_msg_map()
 
 
+# ============================================================
+# GROUP DATA HELPERS  (MongoDB-backed, pickle fallback via bot_data)
+# ============================================================
+def mg_save_group_data(chat_id: str, date_key: str, entries: list) -> None:
+    """Save a single chat+date entries list to MongoDB."""
+    db = get_mongo_db()
+    if db is None:
+        return
+    try:
+        db["group_data"].replace_one(
+            {"_id": f"{chat_id}:{date_key}"},
+            {"_id": f"{chat_id}:{date_key}", "chat_id": chat_id, "date_key": date_key, "entries": entries},
+            upsert=True
+        )
+    except PyMongoError as e:
+        logging.warning(f"MongoDB mg_save_group_data error: {e}")
 
-# ============================================================
-# STUB: get_mongo_db and get_all_duplicate_ids (MongoDB removed)
-# ============================================================
-def get_mongo_db():
-    return None
+
+def mg_load_group_data(chat_id: str, date_key: str) -> list:
+    """Load entries for a single chat+date from MongoDB."""
+    db = get_mongo_db()
+    if db is None:
+        return []
+    try:
+        doc = db["group_data"].find_one({"_id": f"{chat_id}:{date_key}"})
+        return doc["entries"] if doc else []
+    except PyMongoError as e:
+        logging.warning(f"MongoDB mg_load_group_data error: {e}")
+        return []
+
+
+def mg_delete_group_data(chat_id: str, date_key: str) -> None:
+    """Delete a chat+date from MongoDB."""
+    db = get_mongo_db()
+    if db is None:
+        return
+    try:
+        db["group_data"].delete_one({"_id": f"{chat_id}:{date_key}"})
+    except PyMongoError as e:
+        logging.warning(f"MongoDB mg_delete_group_data error: {e}")
+
+
+def mg_delete_all_group_data(chat_id: str) -> None:
+    """Delete all dates for a chat from MongoDB."""
+    db = get_mongo_db()
+    if db is None:
+        return
+    try:
+        db["group_data"].delete_many({"chat_id": chat_id})
+    except PyMongoError as e:
+        logging.warning(f"MongoDB mg_delete_all_group_data error: {e}")
 
 
 def get_all_duplicate_ids() -> list:
-    return []
+    """Return list of duplicate entry IDs from MongoDB group_data."""
+    db = get_mongo_db()
+    if db is None:
+        return []
+    try:
+        seen = {}
+        dupes = []
+        for doc in db["group_data"].find({}, {"entries": 1}):
+            for entry in doc.get("entries", []):
+                if entry in seen:
+                    dupes.append(entry)
+                else:
+                    seen[entry] = True
+        return dupes
+    except PyMongoError as e:
+        logging.warning(f"MongoDB get_all_duplicate_ids error: {e}")
+        return []
 
 
 # ============================================================
@@ -368,13 +505,21 @@ async def clear_data(update: Update, context: CallbackContext) -> None:
     today_key = get_data_key()
     await save_chat_id(update.effective_chat.id, context, update.effective_chat.type)
 
-    if ('group_data' in context.application.bot_data
-            and chat_id in context.application.bot_data['group_data']
-            and today_key in context.application.bot_data['group_data'][chat_id]):
-        del context.application.bot_data['group_data'][chat_id][today_key]
-
-        if context.application.persistence:
-            await context.application.persistence.flush()
+    # Check MongoDB first, then pickle fallback
+    mg_entries = mg_load_group_data(chat_id, today_key)
+    pickle_has = (
+        'group_data' in context.application.bot_data
+        and chat_id in context.application.bot_data['group_data']
+        and today_key in context.application.bot_data['group_data'][chat_id]
+    )
+    if mg_entries or pickle_has:
+        # Delete from MongoDB
+        mg_delete_group_data(chat_id, today_key)
+        # Delete from pickle
+        if pickle_has:
+            del context.application.bot_data['group_data'][chat_id][today_key]
+            if context.application.persistence:
+                await context.application.persistence.flush()
 
         for k in [k for k in plus_counters if k[0] == int(chat_id)]:
             del plus_counters[k]
@@ -404,7 +549,16 @@ async def admin_clearall_command(update: Update, context: CallbackContext) -> No
 
     today_key = get_data_key()
     group_data = context.application.bot_data.get('group_data', {})
-    has_data = any(today_key in days for days in group_data.values())
+    db = get_mongo_db()
+    mg_count = 0
+    if db is not None:
+        try:
+            mg_count = db["group_data"].count_documents({"date_key": today_key})
+        except Exception:
+            pass
+    pickle_count = sum(1 for d in group_data.values() if today_key in d)
+    total_count = max(mg_count, pickle_count)
+    has_data = total_count > 0
 
     if not has_data:
         await update.message.reply_text(f"ℹ️ ယနေ့ ({today_key}) ရှင်းလင်းစရာ data မရှိပါ။")
@@ -416,7 +570,7 @@ async def admin_clearall_command(update: Update, context: CallbackContext) -> No
     ]])
     await update.message.reply_text(
         f"⚠️ <b>Group အားလုံး ရှင်းလင်းမည်</b>\n\n"
-        f"ယနေ့ ({today_key}) data ရှိသော group <b>{sum(1 for d in group_data.values() if today_key in d)}</b> ခု ကို ရှင်းမည်။\nဆက်လုပ်မည်လား?",
+        f"ယနေ့ ({today_key}) data ရှိသော group <b>{total_count}</b> ခု ကို ရှင်းမည်။\nဆက်လုပ်မည်လား?",
         parse_mode='HTML',
         reply_markup=keyboard
     )
@@ -465,7 +619,17 @@ async def adminall_callback(update: Update, context: CallbackContext) -> None:
         group_data = context.application.bot_data.get('group_data', {})
         cleared_groups = 0
 
-        for chat_id_str, days in group_data.items():
+        # Clear from MongoDB
+        db = get_mongo_db()
+        if db is not None:
+            try:
+                result = db["group_data"].delete_many({"date_key": today_key})
+                cleared_groups = result.deleted_count
+            except Exception as e:
+                logging.warning(f"MongoDB adminall clear error: {e}")
+
+        # Clear from pickle fallback
+        for chat_id_str, days in list(group_data.items()):
             if today_key in days:
                 del days[today_key]
                 chat_id_int = int(chat_id_str)
@@ -475,7 +639,8 @@ async def adminall_callback(update: Update, context: CallbackContext) -> None:
                     del plus_counted_msgs[k]
                 for k in [k for k in data_msg_map if k[0] == chat_id_int]:
                     del data_msg_map[k]
-                cleared_groups += 1
+                if cleared_groups == 0:
+                    cleared_groups += 1
 
         save_plus_data()
         save_data_msg_map()
@@ -509,8 +674,10 @@ async def show_data(update: Update, context: CallbackContext) -> None:
     today_key = get_data_key()
     await save_chat_id(update.effective_chat.id, context, update.effective_chat.type)
 
-    context.application.bot_data.setdefault('group_data', {}).setdefault(chat_id, {})
-    collected_data_list = context.application.bot_data['group_data'][chat_id].get(today_key, [])
+    # Load from MongoDB first, fallback to pickle
+    collected_data_list = mg_load_group_data(chat_id, today_key)
+    if not collected_data_list:
+        collected_data_list = context.application.bot_data.get('group_data', {}).get(chat_id, {}).get(today_key, [])
 
     if not collected_data_list:
         await update.message.reply_text(f"No data collected yet for today ({today_key}) in this chat.")
@@ -577,13 +744,18 @@ async def extract_and_save_data(update: Update, context: CallbackContext) -> Non
 
     today_key = get_data_key()
 
+    # Save to MongoDB (primary)
+    existing = mg_load_group_data(chat_id, today_key)
+    existing.append(stored_entry)
+    mg_save_group_data(chat_id, today_key, existing)
+
+    # Also keep pickle in sync (fallback)
     if 'group_data' not in context.application.bot_data:
         context.application.bot_data['group_data'] = {}
     if chat_id not in context.application.bot_data['group_data']:
         context.application.bot_data['group_data'][chat_id] = {}
     if today_key not in context.application.bot_data['group_data'][chat_id]:
         context.application.bot_data['group_data'][chat_id][today_key] = []
-
     context.application.bot_data['group_data'][chat_id][today_key].append(stored_entry)
 
     if context.application.persistence:
@@ -814,6 +986,7 @@ async def clear_group_data_callback(update: Update, context: CallbackContext) ->
     group_id_to_clear = query.data.split('_')[2]
     chat_id_str = str(group_id_to_clear)
 
+    mg_delete_all_group_data(chat_id_str)
     if 'group_data' in context.application.bot_data and chat_id_str in context.application.bot_data['group_data']:
         del context.application.bot_data['group_data'][chat_id_str]
         if context.application.persistence:
@@ -1550,11 +1723,17 @@ async def handle_minus_reply(update: Update, context: CallbackContext) -> None:
         date_key = record["date_key"]
         cid_str = record["chat_id"]
 
-        group_data = context.application.bot_data.get('group_data', {})
-        entries = group_data.get(cid_str, {}).get(date_key, [])
+        # Remove from MongoDB
+        entries = mg_load_group_data(cid_str, date_key)
         if entry in entries:
             entries.remove(entry)
-            group_data.setdefault(cid_str, {})[date_key] = entries
+            mg_save_group_data(cid_str, date_key, entries)
+        # Remove from pickle fallback
+        group_data = context.application.bot_data.get('group_data', {})
+        p_entries = group_data.get(cid_str, {}).get(date_key, [])
+        if entry in p_entries:
+            p_entries.remove(entry)
+            group_data.setdefault(cid_str, {})[date_key] = p_entries
             if context.application.persistence:
                 await context.application.persistence.flush()
 

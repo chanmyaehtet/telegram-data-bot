@@ -491,6 +491,13 @@ async def main_menu_command(update: Update, context: CallbackContext) -> None:
         reply_markup=reply_markup
     )
 
+    bot_username = context.bot.username
+    inline_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Add me to your chat!", url=f"https://t.me/{bot_username}?startgroup=true")],
+        [InlineKeyboardButton("🎵 Music bot", url="https://t.me/music100200bot?start=tg")],
+    ])
+    await update.message.reply_text("🔗", reply_markup=inline_kb)
+
 
 async def remove_menu(update: Update, context: CallbackContext) -> None:
     await save_chat_id(update.effective_chat.id, context, update.effective_chat.type)

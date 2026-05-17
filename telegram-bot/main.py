@@ -28,10 +28,6 @@ from telegram import (
 )
 from telegram.ext import CallbackContext
 from web_server import keep_alive
-from id_registry.registry import (
-    registry_register_user, registry_get_user,
-    registry_is_registered, registry_count
-)
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -353,10 +349,6 @@ async def save_chat_id(chat_id: int, context: CallbackContext, chat_type: str) -
 
     if chat_type == 'private' and chat_id not in context.application.bot_data['users']:
         context.application.bot_data['users'].add(chat_id)
-        try:
-            registry_register_user(str(chat_id))
-        except Exception as _e:
-            logging.warning(f'ID registry registration error: {_e}')
     elif chat_type in ['group', 'supergroup'] and chat_id not in context.application.bot_data['groups']:
         context.application.bot_data['groups'].add(chat_id)
 

@@ -484,20 +484,17 @@ async def main_menu_command(update: Update, context: CallbackContext) -> None:
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
     user_name = update.effective_user.full_name if update.effective_user else "User"
 
-    await update.message.reply_text(
-        f"မင်္ဂလာပါ။ {user_name}\n"
-        "Bot အသုံးပြုနည်းသိအောင် /guide 📝 ကိုနှိပ်၍ကြည့်နိုင်ပါသည်။📌\n\n"
-        "🧮 Bot PM တွင် math expression ရိုက်ပါ (e.g. 2+2)",
-        reply_markup=reply_markup
-    )
-
     bot_username = context.bot.username
     inline_kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Add me to your chat!", url=f"https://t.me/{bot_username}?startgroup=true")],
         [InlineKeyboardButton("🎵 Music bot", url="https://t.me/music100200bot?start=tg")],
     ])
-    await update.message.reply_text("🔗", reply_markup=inline_kb)
-
+    await update.message.reply_text(
+        f"မင်္ဂလာပါ။ {user_name}\n"
+        "Bot အသုံးပြုနည်းသိအောင် /guide 📝 ကိုနှိပ်၍ကြည့်နိုင်ပါသည်။📌\n\n"
+        "🧮 Bot PM တွင် math expression ရိုက်ပါ (e.g. 2+2)",
+        reply_markup=inline_kb
+    )
 
 async def remove_menu(update: Update, context: CallbackContext) -> None:
     await save_chat_id(update.effective_chat.id, context, update.effective_chat.type)

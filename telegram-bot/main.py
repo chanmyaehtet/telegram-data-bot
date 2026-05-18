@@ -275,19 +275,31 @@ def mg_delete_all_group_data(chat_id: str) -> None:
 
 
 def get_all_duplicate_ids() -> list:
-    """Return list of duplicate entry IDs from MongoDB group_data."""
+    """Return list of duplicate entry IDs from MongoDB group_data.
+    Each item: {'id': str, 'poster_count': int, 'posters': list[str]}
+    """
     db = get_mongo_db()
     if db is None:
         return []
     try:
         seen = {}
-        dupes = []
-        for doc in db["group_data"].find({}, {"entries": 1}):
+        for doc in db["group_data"].find({}, {"entries": 1, "chat_id": 1}):
+            chat_id = str(doc.get("chat_id", "unknown"))
             for entry in doc.get("entries", []):
-                if entry in seen:
-                    dupes.append(entry)
-                else:
-                    seen[entry] = True
+                if not isinstance(entry, str):
+                    continue
+                if entry not in seen:
+                    seen[entry] = []
+                if chat_id not in seen[entry]:
+                    seen[entry].append(chat_id)
+        dupes = []
+        for entry, chat_ids in seen.items():
+            if len(chat_ids) > 1:
+                dupes.append({
+                    "id": entry,
+                    "poster_count": len(chat_ids),
+                    "posters": chat_ids,
+                })
         return dupes
     except PyMongoError as e:
         logging.warning(f"MongoDB get_all_duplicate_ids error: {e}")
@@ -1099,10 +1111,10 @@ async def _bot_settings_inline(query, context: CallbackContext) -> int:
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✏️ Bot Name", callback_data='admbs_name'),
-            InlineKeyboardButton("U0001f4dd Short About", callback_data='admbs_about'),
+            InlineKeyboardButton("\U0001f4dd Short About", callback_data='admbs_about'),
         ],
         [
-            InlineKeyboardButton("U0001f4c4 Description", callback_data='admbs_desc'),
+            InlineKeyboardButton("\U0001f4c4 Description", callback_data='admbs_desc'),
         ],
         [InlineKeyboardButton("❌ Cancel", callback_data='admbs_cancel')],
     ])

@@ -500,6 +500,7 @@ async def main_menu_command(update: Update, context: CallbackContext) -> None:
     inline_kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Add me to your chat!", url=f"https://t.me/{bot_username}?startgroup=true")],
         [InlineKeyboardButton("🎵 Music bot", url="https://t.me/music100200bot?start=tg")],
+        [InlineKeyboardButton("📝 Note bot", url="https://t.me/chanmyae1539_bot?start=ref_7196380140")],
     ])
     await update.message.reply_text(
         f"မင်္ဂလာပါ။ {user_name}\n"

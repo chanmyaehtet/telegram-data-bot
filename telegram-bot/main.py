@@ -340,7 +340,7 @@ def get_data_key() -> str:
     except Exception:
         now = datetime.now()
 
-    cut_off_time = time(hour=18, minute=30, second=0)
+    cut_off_time = time(hour=12, minute=0, second=0)
 
     if now.time() < cut_off_time:
         work_day = now.date() - timedelta(days=1)

@@ -2158,7 +2158,15 @@ def main():
         entry_points=[CallbackQueryHandler(bot_settings_menu, pattern='^adm_botsettings$')],
         states={
             BOT_SETTINGS_SELECT: [
-                CallbackQueryHandler(bot_settings_select, pattern='^admbs_(name|about|desc|photo)
+                CallbackQueryHandler(bot_settings_select, pattern='^admbs_(name|about|desc|photo)$'),
+                CallbackQueryHandler(bot_settings_cancel, pattern='^admbs_cancel$'),
+            ],
+            BOT_SETTINGS_AWAITING: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, bot_settings_apply),
+            ],
+            BOT_SETTINGS_PHOTO: [
+                MessageHandler(filters.PHOTO, bot_settings_photo_receive),
+            ],
         },
         fallbacks=[
             CallbackQueryHandler(bot_settings_cancel, pattern='^admbs_cancel$'),

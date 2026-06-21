@@ -52,6 +52,7 @@ SCHEDULE_SELECT_GROUP = 22
 
 BOT_SETTINGS_SELECT   = 40
 BOT_SETTINGS_AWAITING = 41
+BOT_SETTINGS_PHOTO    = 42
 
 
 # ============================================================
@@ -1111,20 +1112,31 @@ async def admin_panel_callback(update: Update, context: CallbackContext) -> None
 async def _bot_settings_inline(query, context: CallbackContext) -> int:
     keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("✏️ Bot Name", callback_data='admbs_name'),
-            InlineKeyboardButton("\U0001f4dd Short About", callback_data='admbs_about'),
+            InlineKeyboardButton('✏️ Bot Name', callback_data='admbs_name'),
+            InlineKeyboardButton('📝 Short About', callback_data='admbs_about'),
         ],
         [
-            InlineKeyboardButton("\U0001f4c4 Description", callback_data='admbs_desc'),
+            InlineKeyboardButton('📄 Description', callback_data='admbs_desc'),
         ],
-        [InlineKeyboardButton("❌ Cancel", callback_data='admbs_cancel')],
+        [
+            InlineKeyboardButton('🖼️ Profile Photo', callback_data='admbs_photo'),
+        ],
+        [InlineKeyboardButton('❌ Cancel', callback_data='admbs_cancel')],
     ])
     await query.edit_message_text(
-        "⚙️ <b>Bot Settings</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-        "ပြောင်းလစ်လိုသည့် setting ကိုနှိပပာ:\n\n"
-        "• <b>Bot Name</b> — Telegram အခြာပြသောနာမည်သ\n"
-        "• <b>Short About</b> — Profile အခြာအကျည်ချုပ်\n"
-        "• <b>Description</b> — Bot ဖွင်မည့်အခာပြသောဖောဖြောချက်",
+        '⚙️ <b>Bot Settings</b>
+━━━━━━━━━━━━━━━━━━━━
+'
+        'ပြောင်းလဲလိုသည့် setting ကိုနှိပ်ပါ:
+
+'
+        '• <b>Bot Name</b> — Telegram တွင်ပြသောနာမည်
+'
+        '• <b>Short About</b> — Profile အကျဉ်းချုပ်
+'
+        '• <b>Description</b> — Bot ဖွင့်သောအခါ ပြသောဖော်ပြချက်
+'
+        '• <b>Profile Photo</b> — Bot ၏ profile ပုံ ပြောင်းလဲ',
         parse_mode='HTML',
         reply_markup=keyboard
     )
@@ -1164,6 +1176,23 @@ async def bot_settings_apply(update: Update, context: CallbackContext) -> int:
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
+    return ConversationHandler.END
+
+
+async def bot_settings_photo_receive(update: Update, context: CallbackContext) -> int:
+    msg = update.message
+    if not msg.photo:
+        await msg.reply_text('❌ ဓာတ်ပုံ မဟုတ်ပါ။ ဓာတ်ပုံ တစ်ပုံ ပေးပို့ပါ:')
+        return BOT_SETTINGS_PHOTO
+    photo_file_id = msg.photo[-1].file_id
+    try:
+        photo_file = await context.application.bot.get_file(photo_file_id)
+        photo_bytes = await photo_file.download_as_bytearray()
+        import io
+        await context.application.bot.set_my_photo(photo=io.BytesIO(bytes(photo_bytes)))
+        await msg.reply_text('✅ Bot profile ပုံ ပြောင်းလဲပြီးပါပြီ! 🖼️')
+    except Exception as e:
+        await msg.reply_text(f'❌ Error: {e}')
     return ConversationHandler.END
 
 
@@ -2136,11 +2165,186 @@ def main():
         entry_points=[CallbackQueryHandler(bot_settings_menu, pattern='^adm_botsettings$')],
         states={
             BOT_SETTINGS_SELECT: [
-                CallbackQueryHandler(bot_settings_select, pattern='^admbs_(name|about|desc)$'),
-                CallbackQueryHandler(bot_settings_cancel, pattern='^admbs_cancel$'),
+                CallbackQueryHandler(bot_settings_select, pattern='^admbs_(name|about|desc|photo)
+        },
+        fallbacks=[
+            CallbackQueryHandler(bot_settings_cancel, pattern='^admbs_cancel$'),
+            CommandHandler('cancel', cancel_conversation),
+        ],
+        allow_reentry=True, per_message=False,
+    )
+    application.add_handler(bot_settings_handler)
+
+    feedback_handler = ConversationHandler(
+        entry_points=[CommandHandler("feedback", start_feedback)],
+        states={FEEDBACK_AWAITING: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_feedback)]},
+        fallbacks=[CommandHandler('cancel', cancel_conversation)],
+        allow_reentry=True
+    )
+    application.add_handler(feedback_handler)
+
+    broadcast_handler = ConversationHandler(
+        entry_points=[CommandHandler("broadcast", broadcast_start, filters=filters.User(ADMIN_IDS))],
+        states={
+            BROADCAST_SELECT_CHAT: [CallbackQueryHandler(broadcast_select_chat, pattern='^bcast_id_')],
+            BROADCAST_AWAITING_MESSAGE: [MessageHandler(
+                (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL |
+                 filters.AUDIO | filters.ANIMATION | filters.VOICE | filters.VIDEO_NOTE |
+                 filters.Sticker.ALL) & ~filters.COMMAND,
+                broadcast_await_message
+            )],
+            BROADCAST_CONFIRMATION: [CallbackQueryHandler(broadcast_confirm, pattern='^bcast_confirm$')]
+        },
+        fallbacks=[
+            CallbackQueryHandler(broadcast_cancel, pattern='^bcast_cancel$'),
+            CommandHandler('cancel', cancel_conversation)
+        ],
+        allow_reentry=True
+    )
+    application.add_handler(broadcast_handler)
+
+    schedule_handler = ConversationHandler(
+        entry_points=[CommandHandler("setschedule", setschedule_command)],
+        states={
+            SCHEDULE_SET_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, schedule_set_time)],
+            SCHEDULE_SET_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, schedule_set_message)],
+            SCHEDULE_SELECT_TYPE: [CallbackQueryHandler(schedule_select_type, pattern='^sched_type_|^sched_cancel$')],
+            SCHEDULE_SELECT_GROUP: [CallbackQueryHandler(schedule_select_group, pattern='^sched_grp_|^sched_cancel$')],
+        },
+        fallbacks=[
+            CallbackQueryHandler(schedule_cancel, pattern='^sched_cancel$'),
+            CommandHandler('cancel', cancel_conversation)
+        ],
+        allow_reentry=True
+    )
+    application.add_handler(schedule_handler)
+
+    application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^\+$'), handle_plus_reply))
+    application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^\-$'), handle_minus_reply))
+
+    application.add_handler(MessageHandler(
+        (filters.TEXT | filters.CAPTION) & ~filters.COMMAND, handle_deposit_report
+    ), group=1)
+    application.add_handler(MessageHandler(
+        (filters.TEXT | filters.CAPTION) & ~filters.COMMAND, handle_whatsapp_report
+    ), group=1)
+    application.add_handler(MessageHandler(
+        filters.UpdateType.EDITED_MESSAGE & (filters.TEXT | filters.CAPTION), handle_deposit_report_edit
+    ), group=1)
+    application.add_handler(MessageHandler(
+        filters.UpdateType.EDITED_MESSAGE & (filters.TEXT | filters.CAPTION), handle_whatsapp_report_edit
+    ), group=1)
+
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_pm_math
+    ), group=2)
+
+    application.add_handler(MessageHandler(
+        (filters.TEXT & ~filters.COMMAND) | filters.CAPTION, extract_and_save_data
+    ))
+
+    application.add_error_handler(error_handler)
+
+    application.run_polling(poll_interval=1.0, drop_pending_updates=True)
+
+
+if __name__ == '__main__':
+    keep_alive()
+    main()
+),
+                CallbackQueryHandler(bot_settings_cancel, pattern='^admbs_cancel
+        },
+        fallbacks=[
+            CallbackQueryHandler(bot_settings_cancel, pattern='^admbs_cancel$'),
+            CommandHandler('cancel', cancel_conversation),
+        ],
+        allow_reentry=True, per_message=False,
+    )
+    application.add_handler(bot_settings_handler)
+
+    feedback_handler = ConversationHandler(
+        entry_points=[CommandHandler("feedback", start_feedback)],
+        states={FEEDBACK_AWAITING: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_feedback)]},
+        fallbacks=[CommandHandler('cancel', cancel_conversation)],
+        allow_reentry=True
+    )
+    application.add_handler(feedback_handler)
+
+    broadcast_handler = ConversationHandler(
+        entry_points=[CommandHandler("broadcast", broadcast_start, filters=filters.User(ADMIN_IDS))],
+        states={
+            BROADCAST_SELECT_CHAT: [CallbackQueryHandler(broadcast_select_chat, pattern='^bcast_id_')],
+            BROADCAST_AWAITING_MESSAGE: [MessageHandler(
+                (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL |
+                 filters.AUDIO | filters.ANIMATION | filters.VOICE | filters.VIDEO_NOTE |
+                 filters.Sticker.ALL) & ~filters.COMMAND,
+                broadcast_await_message
+            )],
+            BROADCAST_CONFIRMATION: [CallbackQueryHandler(broadcast_confirm, pattern='^bcast_confirm$')]
+        },
+        fallbacks=[
+            CallbackQueryHandler(broadcast_cancel, pattern='^bcast_cancel$'),
+            CommandHandler('cancel', cancel_conversation)
+        ],
+        allow_reentry=True
+    )
+    application.add_handler(broadcast_handler)
+
+    schedule_handler = ConversationHandler(
+        entry_points=[CommandHandler("setschedule", setschedule_command)],
+        states={
+            SCHEDULE_SET_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, schedule_set_time)],
+            SCHEDULE_SET_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, schedule_set_message)],
+            SCHEDULE_SELECT_TYPE: [CallbackQueryHandler(schedule_select_type, pattern='^sched_type_|^sched_cancel$')],
+            SCHEDULE_SELECT_GROUP: [CallbackQueryHandler(schedule_select_group, pattern='^sched_grp_|^sched_cancel$')],
+        },
+        fallbacks=[
+            CallbackQueryHandler(schedule_cancel, pattern='^sched_cancel$'),
+            CommandHandler('cancel', cancel_conversation)
+        ],
+        allow_reentry=True
+    )
+    application.add_handler(schedule_handler)
+
+    application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^\+$'), handle_plus_reply))
+    application.add_handler(MessageHandler(filters.REPLY & filters.Regex(r'^\-$'), handle_minus_reply))
+
+    application.add_handler(MessageHandler(
+        (filters.TEXT | filters.CAPTION) & ~filters.COMMAND, handle_deposit_report
+    ), group=1)
+    application.add_handler(MessageHandler(
+        (filters.TEXT | filters.CAPTION) & ~filters.COMMAND, handle_whatsapp_report
+    ), group=1)
+    application.add_handler(MessageHandler(
+        filters.UpdateType.EDITED_MESSAGE & (filters.TEXT | filters.CAPTION), handle_deposit_report_edit
+    ), group=1)
+    application.add_handler(MessageHandler(
+        filters.UpdateType.EDITED_MESSAGE & (filters.TEXT | filters.CAPTION), handle_whatsapp_report_edit
+    ), group=1)
+
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_pm_math
+    ), group=2)
+
+    application.add_handler(MessageHandler(
+        (filters.TEXT & ~filters.COMMAND) | filters.CAPTION, extract_and_save_data
+    ))
+
+    application.add_error_handler(error_handler)
+
+    application.run_polling(poll_interval=1.0, drop_pending_updates=True)
+
+
+if __name__ == '__main__':
+    keep_alive()
+    main()
+),
             ],
             BOT_SETTINGS_AWAITING: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, bot_settings_apply),
+            ],
+            BOT_SETTINGS_PHOTO: [
+                MessageHandler(filters.PHOTO, bot_settings_photo_receive),
             ],
         },
         fallbacks=[

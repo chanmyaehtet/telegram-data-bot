@@ -1124,18 +1124,11 @@ async def _bot_settings_inline(query, context: CallbackContext) -> int:
         [InlineKeyboardButton('❌ Cancel', callback_data='admbs_cancel')],
     ])
     await query.edit_message_text(
-        '⚙️ <b>Bot Settings</b>
-━━━━━━━━━━━━━━━━━━━━
-'
-        'ပြောင်းလဲလိုသည့် setting ကိုနှိပ်ပါ:
-
-'
-        '• <b>Bot Name</b> — Telegram တွင်ပြသောနာမည်
-'
-        '• <b>Short About</b> — Profile အကျဉ်းချုပ်
-'
-        '• <b>Description</b> — Bot ဖွင့်သောအခါ ပြသောဖော်ပြချက်
-'
+        '⚙️ <b>Bot Settings</b>\n━━━━━━━━━━━━━━━━━━━━\n'
+        'ပြောင်းလဲလိုသည့် setting ကိုနှိပ်ပါ:\n\n'
+        '• <b>Bot Name</b> — Telegram တွင်ပြသောနာမည်\n'
+        '• <b>Short About</b> — Profile အကျဉ်းချုပ်\n'
+        '• <b>Description</b> — Bot ဖွင့်သောအခါ ပြသောဖော်ပြချက်\n'
         '• <b>Profile Photo</b> — Bot ၏ profile ပုံ ပြောင်းလဲ',
         parse_mode='HTML',
         reply_markup=keyboard

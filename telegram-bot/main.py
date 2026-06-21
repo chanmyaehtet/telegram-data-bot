@@ -1949,11 +1949,72 @@ async def guide_callback(update: Update, context: CallbackContext) -> None:
 
 
 
+# ============================================================
+# AUTO CLEAR JOB (runs daily at 12:00 PM Yangon time)
+# ============================================================
+
+async def auto_clear_job(context: CallbackContext) -> None:
+    tz = get_yangon_tz()
+    now = datetime.now(tz)
+    prev_key = (now.date() - timedelta(days=1)).strftime('%Y-%m-%d')
+
+    cleared_count = 0
+
+    db = get_mongo_db()
+    if db is not None:
+        try:
+            result = db["group_data"].delete_many({"date_key": prev_key})
+            cleared_count = result.deleted_count
+        except Exception as e:
+            logging.warning(f"auto_clear_job MongoDB error: {e}")
+
+    group_data = context.application.bot_data.get('group_data', {})
+    for chat_id_str, days in list(group_data.items()):
+        if prev_key in days:
+            del days[prev_key]
+            chat_id_int = int(chat_id_str)
+            for k in [k for k in list(plus_counters.keys()) if k[0] == chat_id_int]:
+                del plus_counters[k]
+            for k in [k for k in list(plus_counted_msgs.keys()) if k[0] == chat_id_int]:
+                del plus_counted_msgs[k]
+            for k in [k for k in list(data_msg_map.keys()) if k[0] == chat_id_int]:
+                del data_msg_map[k]
+
+    save_plus_data()
+    save_data_msg_map()
+
+    if context.application.persistence:
+        await context.application.persistence.flush()
+
+    logging.info(f"auto_clear_job: cleared shift {prev_key} ({cleared_count} MongoDB docs)")
+
+    for admin_id in ADMIN_IDS:
+        try:
+            await context.application.bot.send_message(
+                chat_id=admin_id,
+                text=(
+                    f"🤖 <b>Auto Clear ပြုလုပ်ပြီးပါပြီ</b>\n\n"
+                    f"⏰ နေ့လည် 12:00 (Yangon)\n"
+                    f"🗑️ Shift: <b>{prev_key}</b> data ရှင်းပြီးပါပြီ\n"
+                    f"📊 {cleared_count} group(s) cleared"
+                ),
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            logging.warning(f"auto_clear_job notify admin {admin_id}: {e}")
+
+
 # POST INIT
 # ============================================================
 
 async def post_init(application: Application) -> None:
     restore_schedules(application)
+    tz = get_yangon_tz()
+    application.job_queue.run_daily(
+        auto_clear_job,
+        time=time(hour=12, minute=0, second=0, tzinfo=tz),
+        name='auto_clear_daily'
+    )
     await application.bot.set_my_commands([
         BotCommand("start",          "Bot စတင် / Menu ဖွင့်"),
         BotCommand("menu",           "Main menu"),

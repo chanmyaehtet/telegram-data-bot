@@ -1147,6 +1147,9 @@ async def bot_settings_select(update: Update, context: CallbackContext) -> int:
     await query.answer()
     field = query.data[len('admbs_'):]
     context.user_data['admbs_field'] = field
+    if field == 'photo':
+        await query.edit_message_text('🖼️ Bot profile ပုံ ပြောင်းလဲရန် ဓာတ်ပုံ တစ်ပုံ ပေးပို့ပါ:\n(/cancel ဖြင့် ရပ်)')
+        return BOT_SETTINGS_PHOTO
     labels = {'name': 'Name', 'about': 'About', 'desc': 'Description'}
     await query.edit_message_text(f"✏️ New {labels.get(field, field)} ရိုက်ထည့်ပါ:\n(/cancel ဖြင့် ရပ်)")
     return BOT_SETTINGS_AWAITING
@@ -2152,8 +2155,6 @@ def main():
     application.add_handler(CallbackQueryHandler(clear_group_data_callback, pattern=r'^admin_clear_-?\d+$'))
     application.add_handler(CallbackQueryHandler(cancel_group_action, pattern='^admin_cancel$'))
     application.add_handler(CallbackQueryHandler(adminall_callback, pattern=r'^adminall_'))
-    application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern='^adm_'))
-
     bot_settings_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(bot_settings_menu, pattern='^adm_botsettings$')],
         states={
@@ -2175,6 +2176,9 @@ def main():
         allow_reentry=True, per_message=False,
     )
     application.add_handler(bot_settings_handler)
+
+    application.add_handler(CallbackQueryHandler(admin_panel_callback, pattern='^adm_'))
+
 
     feedback_handler = ConversationHandler(
         entry_points=[CommandHandler("feedback", start_feedback)],

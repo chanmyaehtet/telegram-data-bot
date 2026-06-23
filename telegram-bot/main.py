@@ -1184,9 +1184,15 @@ async def bot_settings_photo_receive(update: Update, context: CallbackContext) -
     try:
         photo_file = await context.application.bot.get_file(photo_file_id)
         photo_bytes = await photo_file.download_as_bytearray()
-        import io
-        await context.application.bot.set_my_photo(photo=io.BytesIO(bytes(photo_bytes)))
-        await msg.reply_text('✅ Bot profile ပုံ ပြောင်းလဲပြီးပါပြီ! 🖼️')
+        response = requests.post(
+            f'https://api.telegram.org/bot{TOKEN}/setMyPhoto',
+            files={'photo': ('photo.jpg', bytes(photo_bytes), 'image/jpeg')}
+        )
+        if response.ok:
+            await msg.reply_text('✅ Bot profile ပုံ ပြောင်းလဲပြီးပါပြီ! 🖼️')
+        else:
+            err_msg = response.json().get('description', 'Unknown error')
+            await msg.reply_text(f'❌ Error: {err_msg}')
     except Exception as e:
         await msg.reply_text(f'❌ Error: {e}')
     return ConversationHandler.END

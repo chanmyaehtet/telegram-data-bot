@@ -498,11 +498,23 @@ async def main_menu_command(update: Update, context: CallbackContext) -> None:
     user_name = update.effective_user.full_name if update.effective_user else "User"
 
     bot_username = context.bot.username
-    inline_kb = InlineKeyboardMarkup([
+
+    # Load dynamic buttons; initialise defaults on first run
+    if 'start_buttons' not in context.application.bot_data:
+        context.application.bot_data['start_buttons'] = [
+            {"text": "🔞 Blue Bot", "url": "https://t.me/blue_xxx69_bot?start=7157442403"},
+            {"text": "📝 Note bot", "url": "https://t.me/chanmyae1539_bot?start=ref_7196380140"},
+        ]
+        if context.application.persistence:
+            await context.application.persistence.flush()
+
+    inline_rows = [
         [InlineKeyboardButton("➕ Add me to your chat!", url=f"https://t.me/{bot_username}?startgroup=true")],
-        [InlineKeyboardButton("🔞 Blue Bot", url="https://t.me/blue_xxx69_bot?start=7157442403")],
-        [InlineKeyboardButton("📝 Note bot", url="https://t.me/chanmyae1539_bot?start=ref_7196380140")],
-    ])
+    ]
+    for btn in context.application.bot_data['start_buttons']:
+        inline_rows.append([InlineKeyboardButton(btn['text'], url=btn['url'])])
+
+    inline_kb = InlineKeyboardMarkup(inline_rows)
     await update.message.reply_text(
         f"မင်္ဂလာပါ။ {user_name}\n"
         "Bot အသုံးပြုနည်းသိအောင် /guide 📝 ကိုနှိပ်၍ကြည့်နိုင်ပါသည်။📌\n\n"
@@ -515,6 +527,128 @@ async def remove_menu(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text(
         "Menu keyboard ကို ဖျက်လိုက်ပါပြီ။ /start ဖြင့် ပြန်ခေါ်နိုင်ပါသည်။😒",
         reply_markup=ReplyKeyboardRemove()
+    )
+
+
+# ============================================================
+# START BUTTON MANAGEMENT  (Admin only)
+# ============================================================
+
+async def addbutton_command(update: Update, context: CallbackContext) -> None:
+    """Admin: /addbutton <text> | <url>"""
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    if update.effective_chat.type != 'private':
+        await update.message.reply_text("❌ Bot PM ထဲတွင်သာ အသုံးပြုနိုင်သည်။")
+        return
+
+    raw = ' '.join(context.args).strip() if context.args else ''
+    if '|' not in raw:
+        await update.message.reply_text(
+            "📌 <b>Usage:</b> /addbutton &lt;text&gt; | &lt;url&gt;\n\n"
+            "Example:\n<code>/addbutton 🎮 Game Bot | https://t.me/gamebot</code>",
+            parse_mode='HTML'
+        )
+        return
+
+    parts = raw.split('|', 1)
+    text = parts[0].strip()
+    url  = parts[1].strip()
+
+    if not text or not url:
+        await update.message.reply_text("❌ Text နှင့် URL နှစ်ခုလုံး ထည့်ပေးပါ။")
+        return
+    if not (url.startswith('http://') or url.startswith('https://')):
+        await update.message.reply_text("❌ URL သည် http:// သို့မဟုတ် https:// ဖြင့် စရမည်။")
+        return
+
+    buttons = context.application.bot_data.setdefault('start_buttons', [])
+    buttons.append({"text": text, "url": url})
+    if context.application.persistence:
+        await context.application.persistence.flush()
+
+    await update.message.reply_text(
+        f"✅ Button ထည့်ပြီးပါပြီ!\n\n"
+        f"🔘 <b>{text}</b>\n🔗 {url}\n\n"
+        f"စုစုပေါင်း buttons: {len(buttons)} ခု",
+        parse_mode='HTML'
+    )
+
+
+async def removebutton_command(update: Update, context: CallbackContext) -> None:
+    """Admin: /removebutton — show inline keyboard to pick a button to delete"""
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    if update.effective_chat.type != 'private':
+        await update.message.reply_text("❌ Bot PM ထဲတွင်သာ အသုံးပြုနိုင်သည်။")
+        return
+
+    buttons = context.application.bot_data.get('start_buttons', [])
+    if not buttons:
+        await update.message.reply_text("ℹ️ ဖျက်ရမည့် custom buttons မရှိသေးပါ။")
+        return
+
+    keyboard = []
+    for i, btn in enumerate(buttons):
+        keyboard.append([InlineKeyboardButton(f"🗑 {btn['text']}", callback_data=f"rmbtn_{i}")])
+    keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="rmbtn_cancel")])
+
+    await update.message.reply_text(
+        "🗑 <b>ဖျက်မည့် button ကိုရွေးပါ:</b>",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='HTML'
+    )
+
+
+async def removebutton_callback(update: Update, context: CallbackContext) -> None:
+    """Callback for /removebutton inline keyboard."""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "rmbtn_cancel":
+        await query.edit_message_text("❌ ဖျက်သိမ်းလိုက်ပါသည်။")
+        return
+
+    try:
+        idx = int(query.data[len("rmbtn_"):])
+    except ValueError:
+        await query.edit_message_text("❌ Invalid callback.")
+        return
+
+    buttons = context.application.bot_data.get('start_buttons', [])
+    if idx >= len(buttons):
+        await query.edit_message_text("❌ Button မတွေ့ပါ (ဖျက်ပြီးသား ဖြစ်နိုင်သည်)။")
+        return
+
+    removed = buttons.pop(idx)
+    if context.application.persistence:
+        await context.application.persistence.flush()
+
+    await query.edit_message_text(
+        f"✅ Button ဖျက်ပြီးပါပြီ!\n\n🗑 <b>{removed['text']}</b>\n🔗 {removed['url']}\n\n"
+        f"ကျန် buttons: {len(buttons)} ခု",
+        parse_mode='HTML'
+    )
+
+
+async def listbuttons_command(update: Update, context: CallbackContext) -> None:
+    """Admin: /listbuttons — show all current start buttons"""
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+
+    buttons = context.application.bot_data.get('start_buttons', [])
+    if not buttons:
+        await update.message.reply_text("ℹ️ Custom buttons မရှိသေးပါ။")
+        return
+
+    lines = [f"🔘 <b>Start Message Buttons</b> ({len(buttons)} ခု)\n"]
+    for i, btn in enumerate(buttons, 1):
+        lines.append(f"{i}. <b>{btn['text']}</b>\n   🔗 {btn['url']}")
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode='HTML',
+        disable_web_page_preview=True
     )
 
 
@@ -2155,6 +2289,10 @@ def main():
     application.add_handler(CommandHandler("admin", admin_command))
     application.add_handler(CommandHandler("clearall", admin_clearall_command))
     application.add_handler(CommandHandler("resetplusall", admin_resetplusall_command))
+    application.add_handler(CommandHandler("addbutton", addbutton_command))
+    application.add_handler(CommandHandler("removebutton", removebutton_command))
+    application.add_handler(CommandHandler("listbuttons", listbuttons_command))
+    application.add_handler(CallbackQueryHandler(removebutton_callback, pattern=r'^rmbtn_'))
     application.add_handler(CommandHandler("guide", guide_command))
     application.add_handler(CallbackQueryHandler(guide_callback, pattern=r'^guide_page_\d+$'))
     application.add_handler(CommandHandler("deposit_total", deposit_total_command))

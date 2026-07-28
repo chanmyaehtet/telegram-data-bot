@@ -2133,6 +2133,10 @@ def main():
         .token(TOKEN)
         .persistence(persistence)
         .post_init(post_init)
+        .connect_timeout(30.0)
+        .read_timeout(30.0)
+        .write_timeout(30.0)
+        .pool_timeout(30.0)
         .build()
     )
 
@@ -2256,9 +2260,15 @@ def main():
 
     application.add_error_handler(error_handler)
 
-    application.run_polling(poll_interval=1.0, drop_pending_updates=True)
+    application.run_polling(poll_interval=1.0, drop_pending_updates=True, timeout=30)
 
 
 if __name__ == '__main__':
+    import time as _time
     keep_alive()
-    main()
+    while True:
+        try:
+            main()
+        except Exception as _e:
+            logging.error(f"Bot crashed: {_e}. Restarting in 10 seconds...")
+            _time.sleep(10)
